@@ -8,7 +8,59 @@
 -module(ofs_handler).
 -copyright("2013, Erlang Solutions Ltd.").
 
-% public API
+-export([
+    get_features/1,
+    get_switch_config/1,
+    get_switch_description/1,
+    set_switch_config/3,
+    send_packet/4,
+    delete_all_flows/1,
+    modify_flow/2,
+    modify_flows/2,
+    deleted_all_groups/1,
+    modify_group/2,
+    modify_groups/2,
+    modify_port/2,
+    modify_ports/2,
+    modify_meter/2,
+    modify_meters/2,
+    get_flow_statistics/4,
+    get_aggregate_statistics/4,
+    get_table_statistics/1,
+    get_port_statistics/2,
+    get_queue_statistics/3,
+    get_group_statistics/2,
+    get_meter_statistics/2,
+    get_table_features/1,
+    get_auth_table_features/1,
+    set_table_features/2,
+    get_port_descriptions/1,
+    get_auth_port_descriptions/1,
+    get_group_descriptions/1,
+    get_auth_group_descriptions/1,
+    get_group_features/1,
+    get_meter_configuration/2,
+    get_auth_meter_configuration/2,
+    get_meter_features/1,
+    get_flow_descriptions/1,
+    get_auth_flow_descriptions/1,
+    experimenter/4,
+    barrier/1,
+    get_queue_configuration/2,
+    get_auth_queue_configuration/2,
+    set_connection_role/3,
+    get_async_message_delivery_config/1,
+    set_async_message_delivery_config/4,
+    ping_switch/1,
+    subscribe_async_message/3,
+    subscribe_async_messages/3,
+    get_subscribtions_async_messages/2,
+    terminate/1
+]).
+
+%%% ===========================================================================
+%%% Public API
+%%% ===========================================================================
 
 get_features(DataPathId) ->
     call_active(DataPathId, get_features).
