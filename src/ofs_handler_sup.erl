@@ -34,3 +34,7 @@ init([]) ->
 	      Restart, Shutdown, Type, [of_driver]},
 
     {ok, {SupFlags, [AChild]}}.
+
+find_handler(IpAddr, DataPathId, Features, Version, Connection, InitOpt) ->
+    % look up DataPathId to find ofs_handler_logic pid
+    ok.

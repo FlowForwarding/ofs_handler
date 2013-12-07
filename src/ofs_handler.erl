@@ -9,6 +9,7 @@
 -copyright("2013, Erlang Solutions Ltd.").
 
 -export([
+    start_link/1,
     get_features/1,
     get_switch_config/1,
     get_switch_description/1,
@@ -62,6 +63,15 @@
 %%% Public API
 %%% ===========================================================================
 
+% @doc
+% Start a ofs_handler process for the switch identified by DataPathId.
+% @end
+start_link(DataPathId) ->
+    ofs_handler_sup:start_child(DataPathId).
+
+% @doc
+% Get features
+% @end
 get_features(DataPathId) ->
     call_active(DataPathId, get_features).
 
@@ -216,9 +226,9 @@ terminate(DataPathId) ->
 %%% Internal functions
 %%% ===========================================================================
 
-call_active_handler(DataPathId, Command) ->
-    Handler = locate_active_handler(DataPathId),
+call_active(DataPathId, Command) ->
+    Handler = locate_active(DataPathId),
     gen_server:call(Handler, Command).
 
-locate_active_handler(DataPathId) ->
+locate_active(DataPathId) ->
     ofs_handler_locator:locate_handler(active, DataPathId).
