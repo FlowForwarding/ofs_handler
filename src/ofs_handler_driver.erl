@@ -17,66 +17,58 @@
 
 -export([
     init/6,
-    handle_connect/3,
-    handle_message/3,
-    handle_error/3,
-    handle_disconnect/3,
-    terminate/1
+    handle_connect/7,
+    handle_message/2,
+    handle_error/2,
+    handle_disconnect/2,
+    terminate/2
 ]).
 
 -define(STATE, ofs_handler_driver_state).
 -record(?STATE, {
     handler_pid :: pid(),
-    conn_handlers :: dict()
-}).
+    connection
+    }).
 
 % of_driver callbacks
-
 init(IpAddr, DataPathId, Features, Version, Connection, Opt) ->
-    % look up datapath id, reject if already there
-    {ok, Pid} = ofs_handler_sup:find_handler(IpAddr, DataPathId, Features, Version, Connection, Opt),
-    gen_server:call(Pid, {init, IpAddr, DataPathId, Features, Version, Connection, Opt}),
-    {ok, store_conn_handler(Connection, Pid, #?STATE{handler_pid = Pid})}.
+    {ok, Pid} = ofs_handler_logic:ofd_find_handler(DataPathId),
+    {ok, ConnPid} = ofs_handler_logic:ofd_init(Pid,
+                    IpAddr, DataPathId, Features, Version, Connection, Opt),
+    {ok, #?STATE{handler_pid = ConnPid, connection = Connection}}.
 
-handle_connect(Connection, AuxId, State) ->
-    Pid = State#?STATE.handler_pid,
-    {ok, ConnPid} = gen_server:call(Pid, {connect, Connection, AuxId}),
-    {ok, store_conn_handler(Connection, ConnPid, State)}.
+handle_connect(IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt) ->
+    {ok, Pid} = ofs_handler_logic:ofd_find_handler(DataPathId),
+    {ok, ConnPid} = ofs_handler_logic:ofd_connect(Pid,
+                IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt),
+    {ok, #?STATE{handler_pid = ConnPid, connection = Connection}}.
 
-handle_message(Connection, Msg, State) ->
-    case gen_server:call(conn_handler(Connection, State),
-                                                {message, Connection, Msg}) of
+handle_message(Msg, State = #?STATE{
+                                handler_pid = ConnPid,
+                                connection = Connection}) ->
+    case ofs_handler_logic:ofd_message(ConnPid, Connection, Msg) of
         ok ->
             {ok, State};
         {terminate, Reason} ->
-            {terminate, Reason, erase_conn_handler(Connection, State)}
+            {terminate, Reason, State}
     end.
 
-handle_error(Connection, Error, State) ->
-    case gen_server:call(conn_handler(Connection, State),
-                                                {error, Connection, Error}) of
+handle_error(Error, State = #?STATE{
+                                handler_pid = ConnPid,
+                                connection = Connection}) ->
+    case ofs_handler_logic:ofd_error(ConnPid, Connection, Error) of
         ok ->
             {ok, State};
         {terminate, Reason} ->
-            {terminate, Reason, erase_conn_handler(Connection, State)}
+            {terminate, Reason, State}
     end.
 
-handle_disconnect(Connection, Reason, State) ->
-    ok = gen_server:call(conn_handler(Connection, State),
-                                            {disconnect, Connection, Reason}),
-    {ok, erase_conn_handler(Connection, State)}.
+handle_disconnect(Reason, #?STATE{
+                                handler_pid = ConnPid,
+                                connection = Connection}) ->
+    ok = ofs_handler_logic:ofd_disconnect(ConnPid, Connection, Reason).
 
-terminate(State) ->
-    ok = gen_server:call(State#?STATE.handler_pid, terminate_from_driver).
-
-% internal functions
-conn_handler(Connection, State) ->
-    dict:fetch(Connection, State#?STATE.conn_handlers).
-
-store_conn_handler(Connection, ConnPid, State) ->
-    State#?STATE{conn_handlers = dict:store(Connection, ConnPid,
-                                                State#?STATE.conn_handlers)}.
-
-erase_conn_handler(Connection, State) ->
-    State#?STATE{conn_handlers = dict:erase(Connection,
-                                                State#?STATE.conn_handlers)}.
+terminate(Reason, #?STATE{
+                                handler_pid = ConnPid,
+                                connection = Connection}) ->
+    ok = ofs_handler_logic:ofd_terminate(ConnPid, Connection, Reason).

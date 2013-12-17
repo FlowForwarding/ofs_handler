@@ -11,8 +11,9 @@
 -behaviour(supervisor).
 
 -export([start_link/0]).
-
 -export([init/1]).
+
+-export([find_handler/1]).
 
 -define(SERVER, ?MODULE).
 
@@ -35,6 +36,6 @@ init([]) ->
 
     {ok, {SupFlags, [AChild]}}.
 
-find_handler(IpAddr, DataPathId, Features, Version, Connection, InitOpt) ->
+find_handler(_DataPathId) ->
     % look up DataPathId to find ofs_handler_logic pid
     ok.

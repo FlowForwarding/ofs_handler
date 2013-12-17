@@ -8,7 +8,7 @@
         ipaddr,
         datapathid,
         features,
-        version,
+        of_version,
         main_connection,
         aux_connections,
         callback_mod,
@@ -23,6 +23,15 @@
 %% ------------------------------------------------------------------
 
 -export([start_link/6]).
+-export([
+    ofd_find_handler/1,
+    ofd_init/7,
+    ofd_connect/8,
+    ofd_message/3,
+    ofd_error/3,
+    ofd_disconnect/3,
+    ofd_terminate/3
+]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -38,6 +47,29 @@
 start_link(IpAddr, DataPathId, Features, Version, Connection, Opt) ->
     gen_server:start_link(?MODULE, [IpAddr, DataPathId, Features, Version, Connection, Opt], []).
 
+ofd_find_handler(_DataPathId) ->
+    ok.
+
+ofd_init(Pid, IpAddr, DataPathId, Features, Version, Connection, Opt) ->
+    gen_server:call(Pid,
+            {init, IpAddr, DataPathId, Features, Version, Connection, Opt}).
+
+ofd_connect(Pid, IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt) ->
+    gen_server:call(Pid,
+            {connect, IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt}).
+
+ofd_message(Pid, Connection, Msg) ->
+    gen_server:call(Pid, {message, Connection, Msg}).
+
+ofd_error(Pid, Connection, Error) ->
+    gen_server:call(Pid, {error, Connection, Error}).
+
+ofd_disconnect(Pid, Connection, Reason) ->
+    gen_server:call(Pid, {disconnect, Connection, Reason}).
+
+ofd_terminate(Pid, Connection, Reason) ->
+    gen_server:call(Pid, {terminate_from_driver, Connection, Reason}).
+
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
@@ -48,26 +80,37 @@ init([IpAddr, DataPathId, Features, Version, Connection, Opt]) ->
 
 % handle API
 handle_call(get_features, _From, State) ->
-    {reply, ok, State};
+    Ret = sync_send(get_features, State),
+    {reply, Ret, State};
 handle_call(get_config, _From, State) ->
-    {reply, ok, State};
+    Ret = sync_send(get_config, State),
+    {reply, Ret, State};
 handle_call(get_description, _From, State) ->
-    {reply, ok, State};
-handle_call({set_config, _ConfigFlag, _MissSendLength}, _From, State) ->
-    {reply, ok, State};
-handle_call({send_packet, _Data, _PortNumber, _Actions}, _From, State) ->
-    {reply, ok, State};
+    Ret = sync_send(get_description, State),
+    {reply, Ret, State};
+handle_call({set_config, ConfigFlag, MissSendLength}, _From, State) ->
+    Ret = sync_send(set_config, [ConfigFlag, MissSendLength]),
+    {reply, Ret, State};
+handle_call({send_packet, Data, PortNumber, Actions}, _From, State) ->
+    Ret = sync_send(send_packet, [Data, PortNumber, Actions]),
+    {reply, Ret, State};
 handle_call(delete_all_flows, _From, State) ->
+    % TODO
     {reply, ok, State};
 handle_call({modify_flows, _FlowMods}, _From, State) ->
+    % TODO
     {reply, ok, State};
 handle_call(deleted_all_groups, _From, State) ->
+    % TODO
     {reply, ok, State};
 handle_call({modify_groups, _GroupMods}, _From, State) ->
+    % TODO
     {reply, ok, State};
 handle_call({modify_ports, _PortMods}, _From, State) ->
+    % TODO
     {reply, ok, State};
 handle_call({modify_meters, _MeterMods}, _From, State) ->
+    % TODO
     {reply, ok, State};
 handle_call({get_flow_statistics, _TableId, _Matches, _Options}, _From, State) ->
     {reply, ok, State};
@@ -132,16 +175,29 @@ handle_call({get_async_subscribe, _Module}, _From, State) ->
 handle_call(terminate, _From, State) ->
     {reply, ok, State};
 
-% handle call backs form of_driver
-handle_call({error, _Connection, _Reason}, _From, State) ->
-    {reply, ok, State};
+% handle callbacks from of_driver
+handle_call({init, IpAddr, DataPathId, Features, Version, Connection, Opt}, _From, State) ->
+    % switch connected to of_driver.
+    % this is the main connection.
+    {reply, {ok, self()}, State};
+handle_call({connect, IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt}, _From, State) ->
+    % switch connected to of_driver.
+    % this is an auxiliary connection.
+    {reply, {ok, self()}, State};
 handle_call({message, _Connection, _Message}, _From, State) ->
+    % switch sent us a message
     {reply, ok, State};
-handle_call({connect, _AuxConnection}, _From, State) ->
+handle_call({error, _Connection, _Reason}, _From, State) ->
+    % error on the connection
     {reply, ok, State};
-handle_call(terminate_from_driver, _From, State) ->
+handle_call({disconnect, Connection, Reason}, _From, State) ->
+    % lost an auxiliary connection
+    {reply, ok, State};
+handle_call({terminate_from_driver, Connection, Reason}, _From, State) ->
+    % lost the main connection
     {stop, terminated_from_driver, ok, State};
 handle_call(_Request, _From, State) ->
+    % unknown request
     {reply, ok, State}.
 
 % needs an initialization path that does not include a connection
@@ -211,7 +267,7 @@ do_callback(Module, Function, Args) ->
 tell_controller_mode(Connection, active, State = #?STATE{
                                             generation_id = GenId,
                                             main_connection = Connection,
-                                            version = Version}) ->
+                                            of_version = Version}) ->
     Msg = ofs_msg_lib:set_role(Version, master, GenId),
     State1 = State#?STATE{generation_id = next_generation_id(GenId)},
     case of_driver:sync_send(Connection, Msg) of
@@ -238,3 +294,21 @@ my_controller_mode(_Peer) ->
 
 tell_standby(generation_id, State) ->
     {ok, State}.
+
+sync_send(MsgFn, State) ->
+    sync_send(MsgFn, [], State).
+
+sync_send(MsgFn, Args, State) ->
+    Conn = State#?STATE.main_connection,
+    Version = State#?STATE.of_version,
+    case of_driver:sync_send(Conn,
+                            apply(of_msg_lib, MsgFn, [Version | Args])) of
+        {ok, noreply} ->
+            noreply;
+        {ok, Reply} ->
+            {Name, _Xid, Res} = of_msg_lib:decode(Reply),
+            {Name, Res};
+        Error ->
+            % {error, Reason}
+            Error
+    end.
