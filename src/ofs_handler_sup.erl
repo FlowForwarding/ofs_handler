@@ -20,20 +20,7 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 init([]) ->
-    RestartStrategy = one_for_one,
-    MaxRestarts = 1000,
-    MaxSecondsBetweenRestarts = 3600,
-
-    SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
-    
-    Restart = permanent,
-    Shutdown = 2000,
-    Type = worker,
-
-    AChild = {of_driver, {of_driver, start_link, []},
-	      Restart, Shutdown, Type, [of_driver]},
-
-    {ok, {SupFlags, [AChild]}}.
+    {ok, {{one_for_one, 1000, 3600}, []}}.
 
 find_handler(IpAddr, DataPathId, Features, Version, Connection, InitOpt) ->
     % look up DataPathId to find ofs_handler_logic pid
