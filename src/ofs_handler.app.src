@@ -4,5 +4,5 @@
   {applications, [kernel,
                   stdlib]},
   {env, []},
-  {mod, {of_driver_app, []}}
+  {mod, {ofs_handler_app, []}}
  ]}.

@@ -10,3 +10,6 @@
 *.plt
 rebar
 erl_crash.dump
+*~
+.DS_Store
+Mnesia*
