@@ -48,7 +48,7 @@ start_link(IpAddr, DataPathId, Features, Version, Connection, Opt) ->
     gen_server:start_link(?MODULE, [IpAddr, DataPathId, Features, Version, Connection, Opt], []).
 
 ofd_find_handler(_DataPathId) ->
-    ok.
+    {ok,self()}.
 
 ofd_init(Pid, IpAddr, DataPathId, Features, Version, Connection, Opt) ->
     gen_server:call(Pid,
