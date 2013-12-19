@@ -1,4 +1,6 @@
 -module(ofs_handler_logic).
+
+-include("ofs_handler_logic.hrl").
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
@@ -6,7 +8,7 @@
 -record(?STATE,
     {
         ipaddr,
-        datapathid,
+        datapath_id,
         features,
         of_version,
         main_connection,
@@ -22,7 +24,7 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/6]).
+-export([start_link/1]).
 -export([
     ofd_find_handler/1,
     ofd_init/7,
@@ -44,19 +46,31 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-start_link(IpAddr, DataPathId, Features, Version, Connection, Opt) ->
-    gen_server:start_link(?MODULE, [IpAddr, DataPathId, Features, Version, Connection, Opt], []).
+start_link(DatapathId) ->
+    gen_server:start_link(?MODULE, [DatapathId], []).
 
-ofd_find_handler(_DataPathId) ->
-    {ok,self()}.
+ofd_find_handler(DatapathId) ->
+    HandlerPid = case ets:lookup(?HANDLERS_TABLE, DatapathId) of
+        [] ->
+            % spin up new ofs_handler
+            {ok, Pid} = ofs_handler_logic_sup:start_child(DatapathId),
+            % XXX put code to remove the entry in ets somewhere.
+            true = ets:insert_new(?HANDLERS_TABLE, #handlers_table{
+                                                    datapath_id = DatapathId,
+                                                    handler_pid = Pid}),
+            Pid;
+        [Handler = #handlers_table{}] ->
+            Handler#handlers_table.handler_pid
+    end,
+    {ok, HandlerPid}.
 
-ofd_init(Pid, IpAddr, DataPathId, Features, Version, Connection, Opt) ->
+ofd_init(Pid, IpAddr, DatapathId, Features, Version, Connection, Opt) ->
     gen_server:call(Pid,
-            {init, IpAddr, DataPathId, Features, Version, Connection, Opt}).
+            {init, IpAddr, DatapathId, Features, Version, Connection, Opt}).
 
-ofd_connect(Pid, IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt) ->
+ofd_connect(Pid, IpAddr, DatapathId, Features, Version, Connection, AuxId, Opt) ->
     gen_server:call(Pid,
-            {connect, IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt}).
+            {connect, IpAddr, DatapathId, Features, Version, Connection, AuxId, Opt}).
 
 ofd_message(Pid, Connection, Msg) ->
     gen_server:call(Pid, {message, Connection, Msg}).
@@ -74,9 +88,9 @@ ofd_terminate(Pid, Connection, Reason) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
-init([IpAddr, DataPathId, Features, Version, Connection, Opt]) ->
-    gen_server:cast(self(), {init, IpAddr, DataPathId, Features, Version, Connection, Opt}),
-    {ok, #?STATE{}}.
+init([DatapathId]) ->
+    gen_server:cast(self(), init),
+    {ok, #?STATE{datapath_id = DatapathId}}.
 
 % handle API
 handle_call(get_features, _From, State) ->
@@ -176,14 +190,24 @@ handle_call(terminate, _From, State) ->
     {reply, ok, State};
 
 % handle callbacks from of_driver
-handle_call({init, IpAddr, DataPathId, Features, Version, Connection, Opt}, _From, State) ->
+handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, State = #?STATE{datapath_id = DatapathId}) ->
     % switch connected to of_driver.
     % this is the main connection.
-    {reply, {ok, self()}, State};
-handle_call({connect, IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt}, _From, State) ->
+    State1 = State#?STATE{
+        ipaddr = IpAddr,
+        features = Features,
+        of_version = Version,
+        main_connection = Connection,
+        aux_connections = [],
+        callback_mod = get_opt(callback_mod, Opt),
+        opt = Opt
+    },
+    {reply, {ok, self()}, State1};
+handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, AuxId, _Opt}, _From, State = #?STATE{aux_connections = AuxConnections}) ->
+    State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
     % switch connected to of_driver.
     % this is an auxiliary connection.
-    {reply, {ok, self()}, State};
+    {reply, {ok, self()}, State1};
 handle_call({message, _Connection, _Message}, _From, State) ->
     % switch sent us a message
     {reply, ok, State};
@@ -202,43 +226,23 @@ handle_call(_Request, _From, State) ->
 
 % needs an initialization path that does not include a connection
 % two states - connected and not_connected
-handle_cast({init, _IpAddr, DataPathId, _Features, Version, Connection, Options}, State) ->
+handle_cast(init, State) ->
     % callback module from opts
-    Module = get_opt(callback_module, Options),
+    Module = get_opt(callback_module),
 
     % controller peer from opts
-    Peer = get_opt(peer, Options),
+    Peer = get_opt(peer),
 
     % callback module options
-    ModuleOpts = get_opt(callback_opts, Options),
+    ModuleOpts = get_opt(callback_opts),
 
     % find out if this controller is active or standby
     Mode = my_controller_mode(Peer),
 
-
     State1 = State#?STATE{
     },
+    {noreply, State1};
 
-    % do callback
-    % do this first so higher level is informed if the active/standby
-    % initialization fails for some reason
-    case do_callback(Module, init, [Mode, DataPathId, Version, ModuleOpts]) of
-        {ok, CallbackState} ->
-            State2 = State1#?STATE{callback_state = CallbackState},
-	    % tell the switch our controller mode (active -> master
-	    % or standby -> slave)
-            case tell_controller_mode(Connection, Mode, State2) of
-                {error, Reason, State3} ->
-                    {stop, Reason, State3};
-                {ok, State3} ->
-                    case tell_standby(generation_id, State3) of
-                        ok ->
-                            {noreply, State3};
-                        {error, Reason} ->
-                            {stop, Reason, State3}
-                    end
-            end
-    end;
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -281,6 +285,9 @@ tell_controller_mode(_Connection, standby, _State) ->
 
 next_generation_id(GenId) ->
     GenId + 1.
+
+get_opt(Key) ->
+    get_opt(Key, []).
 
 get_opt(Key, Options) ->
     Default = case application:get_env(ofs_handler, Key) of
