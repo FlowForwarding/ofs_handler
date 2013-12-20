@@ -266,7 +266,8 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 
 do_callback(Module, Function, Args) ->
-    erlang:apply(Module, Function, Args).
+    io:format("callback: ~p ~p ~p~n", [Module, Function, Args]).
+    % erlang:apply(Module, Function, Args).
 
 tell_controller_mode(Connection, active, State = #?STATE{
                                             generation_id = GenId,
@@ -294,7 +295,7 @@ get_opt(Key, Options) ->
         {ok, V} -> V;
         undefined -> undefined
     end,
-    proplsits:get_value(Key, Options, Default).
+    proplists:get_value(Key, Options, Default).
 
 my_controller_mode(_Peer) ->
     active.
