@@ -22,7 +22,7 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 init([]) ->
-    ?HANDLERS_TABLE = ets:new(?HANDLERS_TABLE, [named_table, set, {keypos, 2}]),
+    ?HANDLERS_TABLE = ets:new(?HANDLERS_TABLE, [named_table, public, set, {keypos, 2}]),
     C = ofs_handler_logic,
     RestartStrategy = simple_one_for_one,
     MaxRestarts = 1000,
