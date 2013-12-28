@@ -89,7 +89,6 @@ ofd_terminate(Pid, Connection, Reason) ->
 %% ------------------------------------------------------------------
 
 init([DatapathId]) ->
-    gen_server:cast(self(), init),
     {ok, #?STATE{datapath_id = DatapathId}}.
 
 % handle API
@@ -187,22 +186,29 @@ handle_call({async_subscribe, _Module, _Items}, _From, State) ->
 handle_call({get_async_subscribe, _Module}, _From, State) ->
     {reply, ok, State};
 handle_call(terminate, _From, State) ->
-    {reply, ok, State};
-
+    {reply, ok, State}; 
 % handle callbacks from of_driver
 handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, State = #?STATE{datapath_id = DatapathId}) ->
     % switch connected to of_driver.
     % this is the main connection.
+    CallbackModule = get_opt(callback_module, Opt),
     State1 = State#?STATE{
         ipaddr = IpAddr,
         features = Features,
         of_version = Version,
         main_connection = Connection,
         aux_connections = [],
-        callback_mod = get_opt(callback_mod, Opt),
+        callback_mod = CallbackModule,
         opt = Opt
     },
-    {reply, {ok, self()}, State1};
+    CallbackOpt = get_opt(callback_opt, Opt),
+    case do_callback(CallbackModule, init, [active, IpAddr, DatapathId, Features, Version, Connection, CallbackOpt]) of
+        {ok, CallbackState} ->
+            {reply, {ok, self()},
+                            State1#?STATE{callback_state = CallbackState}};
+        {error, _Reason} ->
+            {stop, normal, State1}
+    end;
 handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, AuxId, _Opt}, _From, State = #?STATE{aux_connections = AuxConnections}) ->
     State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
     % switch connected to of_driver.
@@ -214,34 +220,15 @@ handle_call({message, _Connection, _Message}, _From, State) ->
 handle_call({error, _Connection, _Reason}, _From, State) ->
     % error on the connection
     {reply, ok, State};
-handle_call({disconnect, Connection, Reason}, _From, State) ->
+handle_call({disconnect, _Connection, _Reason}, _From, State) ->
     % lost an auxiliary connection
     {reply, ok, State};
-handle_call({terminate_from_driver, Connection, Reason}, _From, State) ->
+handle_call({terminate_from_driver, _Connection, _Reason}, _From, State) ->
     % lost the main connection
     {stop, terminated_from_driver, ok, State};
 handle_call(_Request, _From, State) ->
     % unknown request
     {reply, ok, State}.
-
-% needs an initialization path that does not include a connection
-% two states - connected and not_connected
-handle_cast(init, State) ->
-    % callback module from opts
-    Module = get_opt(callback_module),
-
-    % controller peer from opts
-    Peer = get_opt(peer),
-
-    % callback module options
-    ModuleOpts = get_opt(callback_opts),
-
-    % find out if this controller is active or standby
-    Mode = my_controller_mode(Peer),
-
-    State1 = State#?STATE{
-    },
-    {noreply, State1};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -249,11 +236,10 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #?STATE{
-                                main_connection = MainConn,
-                                callback_state = CallbackState,
-                                callback_mod = Module}) ->
-    % remove self from datapath id map to avoid getting disconnect callbacks
+terminate(_Reason, #?STATE{main_connection = MainConn,
+                           callback_state = CallbackState,
+                           callback_mod = Module}) ->
+    % XXX remove self from datapath id map to avoid getting disconnect callbacks
     of_driver:close_connection(MainConn),
     do_callback(Module, terminate, [CallbackState]),
     ok.
@@ -266,29 +252,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 
 do_callback(Module, Function, Args) ->
-    io:format("callback: ~p ~p ~p~n", [Module, Function, Args]).
-    % erlang:apply(Module, Function, Args).
-
-tell_controller_mode(Connection, active, State = #?STATE{
-                                            generation_id = GenId,
-                                            main_connection = Connection,
-                                            of_version = Version}) ->
-    Msg = ofs_msg_lib:set_role(Version, master, GenId),
-    State1 = State#?STATE{generation_id = next_generation_id(GenId)},
-    case of_driver:sync_send(Connection, Msg) of
-        {error, Reason} ->
-            {error, Reason, State1};
-        {ok, _Reply} ->
-            {ok, State1}
-    end;
-tell_controller_mode(_Connection, standby, _State) ->
-    ok.
-
-next_generation_id(GenId) ->
-    GenId + 1.
-
-get_opt(Key) ->
-    get_opt(Key, []).
+    erlang:apply(Module, Function, Args).
 
 get_opt(Key, Options) ->
     Default = case application:get_env(ofs_handler, Key) of
@@ -296,12 +260,6 @@ get_opt(Key, Options) ->
         undefined -> undefined
     end,
     proplists:get_value(Key, Options, Default).
-
-my_controller_mode(_Peer) ->
-    active.
-
-tell_standby(generation_id, State) ->
-    {ok, State}.
 
 sync_send(MsgFn, State) ->
     sync_send(MsgFn, [], State).
