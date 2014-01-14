@@ -55,7 +55,7 @@
     ping_switch/1,
     subscribe_async_message/3,
     subscribe_async_messages/3,
-    get_subscribtions_async_messages/2,
+    get_subscriptions_async_messages/2,
     terminate/1
 ]).
 
@@ -216,7 +216,7 @@ subscribe_async_message(DataPathId, Module, Item) ->
 subscribe_async_messages(DataPathId, Module, Items) ->
     call_active(DataPathId, {async_subscribe, Module, Items}).
 
-get_subscribtions_async_messages(DataPathId, Module) ->
+get_subscriptions_async_messages(DataPathId, Module) ->
     call_active(DataPathId, {get_async_subscribe, Module}).
 
 terminate(DataPathId) ->
