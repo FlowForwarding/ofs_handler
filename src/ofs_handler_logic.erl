@@ -92,101 +92,29 @@ init([DatapathId]) ->
     {ok, #?STATE{datapath_id = DatapathId}}.
 
 % handle API
-handle_call(get_features, _From, State) ->
-    Ret = sync_send(get_features, State),
+handle_call({send, Msg}, _From, State) ->
+    Ret = send(Msg, State),
     {reply, Ret, State};
-handle_call(get_config, _From, State) ->
-    Ret = sync_send(get_config, State),
+handle_call({sync_send, Msg}, _From, State) ->
+    Ret = sync_send(Msg, State),
     {reply, Ret, State};
-handle_call(get_description, _From, State) ->
-    Ret = sync_send(get_description, State),
+handle_call({send_list, Msg}, _From, State) ->
+    Ret = send_list(Msg, State),
     {reply, Ret, State};
-handle_call({set_config, ConfigFlag, MissSendLength}, _From, State) ->
-    Ret = sync_send(set_config, [ConfigFlag, MissSendLength]),
+handle_call({sync_send_list, Msg}, _From, State) ->
+    Ret = sync_send_list(Msg, State),
     {reply, Ret, State};
-handle_call({send_packet, Data, PortNumber, Actions}, _From, State) ->
-    Ret = sync_send(send_packet, [Data, PortNumber, Actions]),
+handle_call({ping_switch, Timeout}, _From, State) ->
+    Ret = ping(Timeout, State),
     {reply, Ret, State};
-handle_call(delete_all_flows, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_flows, _FlowMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call(deleted_all_groups, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_groups, _GroupMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_ports, _PortMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_meters, _MeterMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({get_flow_statistics, _TableId, _Matches, _Options}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_aggregate_statistics, _TableId, _Matches, _Options}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_table_statistics, _From, State) ->
-    {reply, ok, State};
-handle_call({get_port_statistics, _PortNumber}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_queue_statistics, _PortNumber, _QueueId}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_group_statistics, _GroupId}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_meter_statistics, _MeterId}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_table_features, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_table_features, _From, State) ->
-    {reply, ok, State};
-handle_call({set_table_features, _TableFeatures}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_port_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_port_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_group_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_group_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_group_features, _From, State) ->
-    {reply, ok, State};
-handle_call({get_meter_configuration, _MeterId}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_auth_meter_configuration, _MeterId}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_meter_features, _From, State) ->
-    {reply, ok, State};
-handle_call(get_flow_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_flow_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call({experimenter, _ExpId, _Type, _Data}, _From, State) ->
-    {reply, ok, State};
-handle_call(barrier, _From, State) ->
-    {reply, ok, State};
-handle_call({get_queue_configuration, _PortNumber}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_queue_auth_configuration, _PortNumber}, _From, State) ->
-    {reply, ok, State};
-handle_call({set_role, _Role, _GenerationId}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_async_configuration, _From, State) ->
-    {reply, ok, State};
-handle_call({set_async_configuration, _PacketInMask, _PortStatusMask, _FlowRemoveMask}, _From, State) ->
-    {reply, ok, State};
-handle_call(ping_switch, _From, State) ->
-    {reply, ok, State};
-handle_call({async_subscribe, _Module, _Items}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_async_subscribe, _Module}, _From, State) ->
-    {reply, ok, State};
+handle_call({async_subscribe, Module, Item}, _From, State) ->
+    Ret = subscribe(Module, Item, State),
+    {reply, Ret, State};
+handle_call({get_async_subscribe, Module}, _From, State) ->
+    Ret = get_subscriptions(Module, State),
+    {reply, Ret, State};
 handle_call(terminate, _From, State) ->
-    {reply, ok, State}; 
+    {stop, terminated_by_call, ok, State}; 
 % handle callbacks from of_driver
 handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, State = #?STATE{datapath_id = DatapathId}) ->
     % switch connected to of_driver.
@@ -213,9 +141,12 @@ handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, Aux
     State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
     % switch connected to of_driver.
     % this is an auxiliary connection.
+    % XXX spawn connection handler
     {reply, {ok, self()}, State1};
 handle_call({message, _Connection, _Message}, _From, State) ->
     % switch sent us a message
+    % XXX lookup message type in ets
+    % XXX process message
     {reply, ok, State};
 handle_call({error, _Connection, _Reason}, _From, State) ->
     % error on the connection
@@ -261,20 +192,35 @@ get_opt(Key, Options) ->
     end,
     proplists:get_value(Key, Options, Default).
 
-sync_send(MsgFn, State) ->
-    sync_send(MsgFn, [], State).
-
-sync_send(MsgFn, Args, State) ->
+% XXX process commands through ofs_store
+send(Msg, State) ->
     Conn = State#?STATE.main_connection,
-    Version = State#?STATE.of_version,
-    case of_driver:sync_send(Conn,
-                            apply(of_msg_lib, MsgFn, [Version | Args])) of
-        {ok, noreply} ->
-            noreply;
-        {ok, Reply} ->
-            {Name, _Xid, Res} = of_msg_lib:decode(Reply),
-            {Name, Res};
-        Error ->
-            % {error, Reason}
-            Error
-    end.
+    of_driver:send(Conn, Msg).
+
+sync_send(Msg, State) ->
+    Conn = State#?STATE.main_connection,
+    of_driver:sync_send(Conn, Msg).
+
+send_list(Msgs, State) ->
+    Conn = State#?STATE.main_connection,
+    of_driver:send_list(Conn, Msgs).
+
+sync_send_list(Msgs, State) ->
+    Conn = State#?STATE.main_connection,
+    of_driver:sync_send_list(Conn, Msgs).
+
+ping(_Timeout, _State) ->
+    ok.
+
+subscribe(Module, in_packet, State) ->
+    subscribe(Module, {in_packet, fun always/1}, State);
+subscribe(_Module, {in_packet, _FilterFn}, _State) ->
+    % XXX store subscription in ets?
+    ok;
+subscribe(_Module, _Item, _State) ->
+    ok.
+
+get_subscriptions(_Module, _State) ->
+    ok.
+
+always(_) -> true.
