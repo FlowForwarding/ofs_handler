@@ -18,7 +18,7 @@ start(_StartType, _StartArgs) ->
 	    {ok, Pid};
 	Error ->
 	    Error
-		end.
+    end.
 
 stop(_State) ->
     ok.

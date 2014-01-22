@@ -3,6 +3,6 @@
   {vsn, "0.1"},
   {applications, [kernel,
                   stdlib]},
-  {env, []},
+  {env, [{callback_module, ofs_handler_default_handler}]},
   {mod, {ofs_handler_app, []}}
  ]}.

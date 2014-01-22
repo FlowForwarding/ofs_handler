@@ -25,45 +25,38 @@
 %%% ===========================================================================
 
 % @doc
-% Start a ofs_handler process for the switch identified by DataPathId.
+% Start a ofs_handler process for the switch identified by DatapathId.
 % @end
-start_link(DataPathId) ->
-    ofs_handler_sup:start_child(DataPathId).
+start_link(DatapathId) ->
+    ofs_handler_logic_sup:start_child(DatapathId).
 
 % @doc
 % @end
 send(DatapathId, Msg) ->
-    call_active(DatapathId, {send, Msg}).
+    ofs_handler_logic:call_active(DatapathId, {send, Msg}).
 
 sync_send(DatapathId, Msg) ->
-    call_active(DatapathId, {sync_send, Msg}).
+    ofs_handler_logic:call_active(DatapathId, {sync_send, Msg}).
 
 send_list(DatapathId, Msgs) ->
-    call_active(DatapathId, {send_list, Msgs}).
+    ofs_handler_logic:call_active(DatapathId, {send_list, Msgs}).
 
 sync_send_list(DatapathId, Msgs) ->
-    call_active(DatapathId, {sync_send_list, Msgs}).
+    ofs_handler_logic:call_active(DatapathId, {sync_send_list, Msgs}).
 
 ping_switch(DatapathId) ->
     % send echo, wait for response
-    call_active(DatapathId, ping_switch).
+    ofs_handler_logic:call_active(DatapathId, ping_switch).
 
 subscribe_async_message(DatapathId, Module, Item) ->
-    call_active(DatapathId, {async_subscribe, Module, Item}).
+    ofs_handler_logic:call_active(DatapathId, {async_subscribe, Module, Item}).
 
 get_subscriptions_async_messages(DatapathId, Module) ->
-    call_active(DatapathId, {get_async_subscribe, Module}).
+    ofs_handler_logic:call_active(DatapathId, {get_async_subscribe, Module}).
 
-terminate(DataPathId) ->
-    call_active(DataPathId, terminate).
+terminate(DatapathId) ->
+    ofs_handler_logic:call_active(DatapathId, terminate).
 
 %%% ===========================================================================
 %%% Internal functions
 %%% ===========================================================================
-
-call_active(DataPathId, Command) ->
-    Handler = locate_active(DataPathId),
-    gen_server:call(Handler, Command).
-
-locate_active(DataPathId) ->
-    ofs_handler_locator:locate_handler(active, DataPathId).

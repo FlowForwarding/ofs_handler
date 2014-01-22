@@ -33,7 +33,8 @@
     ofd_message/3,
     ofd_error/3,
     ofd_disconnect/3,
-    ofd_terminate/3
+    ofd_terminate/3,
+    call_active/2
 ]).
 
 %% ------------------------------------------------------------------
@@ -53,12 +54,7 @@ start_link(DatapathId) ->
 ofd_find_handler(DatapathId) ->
     HandlerPid = case ets:lookup(?HANDLERS_TABLE, DatapathId) of
         [] ->
-            % spin up new ofs_handler
             {ok, Pid} = ofs_handler_logic_sup:start_child(DatapathId),
-            % XXX put code to remove the entry in ets somewhere.
-            true = ets:insert_new(?HANDLERS_TABLE, #handlers_table{
-                                                    datapath_id = DatapathId,
-                                                    handler_pid = Pid}),
             Pid;
         [Handler = #handlers_table{}] ->
             Handler#handlers_table.handler_pid
@@ -86,10 +82,21 @@ ofd_terminate(Pid, Connection, Reason) ->
     gen_server:call(Pid, {terminate_from_driver, Connection, Reason}).
 
 %% ------------------------------------------------------------------
+%% utility functions
+%% ------------------------------------------------------------------
+
+call_active(DatapathId, Command) ->
+    case locate_active(DatapathId) of
+        no_handler -> no_handler;
+        HandlerPid -> gen_server:call(HandlerPid, Command)
+    end.
+
+%% ------------------------------------------------------------------
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
 init([DatapathId]) ->
+    register_handler(DatapathId),
     Subscriptions = ets:new(subscriptions, [bag, protected]),
     {ok, #?STATE{datapath_id = DatapathId, subscriptions = Subscriptions}}.
 
@@ -136,7 +143,7 @@ handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _Fro
         {ok, CallbackState} ->
             {reply, {ok, self()},
                             State1#?STATE{callback_state = CallbackState}};
-        {terminate, Reason} ->
+        {erroerror, Reason} ->
             signal_stop(),
             {reply, {terminate, Reason}, State1}
     end;
@@ -177,9 +184,10 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, #?STATE{main_connection = MainConn,
+                           datapath_id = DatapathId,
                            callback_state = CallbackState,
                            callback_mod = Module}) ->
-    % XXX remove self from datapath id map to avoid getting disconnect callbacks
+    unregister_handler(DatapathId),
     of_driver:close_connection(MainConn),
     do_callback(Module, terminate, [CallbackState]),
     ok.
@@ -190,6 +198,20 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
+
+locate_active(DatapathId) ->
+    case ets:lookup(?HANDLERS_TABLE, DatapathId) of
+        [] -> no_handler;
+        [#handlers_table{handler_pid = HandlerPid}] -> HandlerPid
+    end.
+
+register_handler(DatapathId) ->
+    true = ets:insert_new(?HANDLERS_TABLE, #handlers_table{
+                                                datapath_id = DatapathId,
+                                                handler_pid = self()}).
+
+unregister_handler(DatapathId) ->
+    true = ets:delete(?HANDLERS_TABLE, DatapathId).
 
 signal_stop() ->
     gen_server:cast(self(), stop).
