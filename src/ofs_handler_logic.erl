@@ -16,7 +16,8 @@
         callback_mod,
         callback_state,
         generation_id,
-        opt
+        opt,
+        subscriptions
     }
 ).
 
@@ -89,7 +90,8 @@ ofd_terminate(Pid, Connection, Reason) ->
 %% ------------------------------------------------------------------
 
 init([DatapathId]) ->
-    {ok, #?STATE{datapath_id = DatapathId}}.
+    Subscriptions = ets:new(subscriptions, [bag, protected]),
+    {ok, #?STATE{datapath_id = DatapathId, subscriptions = Subscriptions}}.
 
 % handle API
 handle_call({send, Msg}, _From, State) ->
@@ -134,8 +136,9 @@ handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _Fro
         {ok, CallbackState} ->
             {reply, {ok, self()},
                             State1#?STATE{callback_state = CallbackState}};
-        {error, _Reason} ->
-            {stop, normal, State1}
+        {terminate, Reason} ->
+            signal_stop(),
+            {reply, {terminate, Reason}, State1}
     end;
 handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, AuxId, _Opt}, _From, State = #?STATE{aux_connections = AuxConnections}) ->
     State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
@@ -143,11 +146,15 @@ handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, Aux
     % this is an auxiliary connection.
     % XXX spawn connection handler
     {reply, {ok, self()}, State1};
-handle_call({message, _Connection, _Message}, _From, State) ->
+handle_call({message, _Connection, Message}, _From, State) ->
     % switch sent us a message
-    % XXX lookup message type in ets
-    % XXX process message
-    {reply, ok, State};
+    case notify(Message, State) of
+        {ok, CallbackState} ->
+            {reply, ok, State#?STATE{callback_state = CallbackState}};
+        {terminate, Reason} ->
+            signal_stop(),
+            {reply, {terminate, Reason}, State}
+    end;
 handle_call({error, _Connection, _Reason}, _From, State) ->
     % error on the connection
     {reply, ok, State};
@@ -161,6 +168,8 @@ handle_call(_Request, _From, State) ->
     % unknown request
     {reply, ok, State}.
 
+handle_cast(stop, State) ->
+    {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -182,6 +191,9 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+signal_stop() ->
+    gen_server:cast(self(), stop).
+
 do_callback(Module, Function, Args) ->
     erlang:apply(Module, Function, Args).
 
@@ -191,6 +203,34 @@ get_opt(Key, Options) ->
         undefined -> undefined
     end,
     proplists:get_value(Key, Options, Default).
+
+notify(Message, State) ->
+    Subscriptions = State#?STATE.subscriptions,
+    CallbackState = State#?STATE.callback_state,
+    {MsgType, _} = DecodedMsg = of_msg_lib:decode(Message),
+    Subscribers = ets:lookup(Subscriptions, MsgType),
+    notify_subscriber(Subscribers, DecodedMsg, CallbackState).
+
+notify_subscriber([], _Message, CallbackState) ->
+    {ok, CallbackState};
+notify_subscriber([{_Type, Module, Filter}|Rest], DecodedMsg, CallbackState) ->
+    case subscriber_filter(Filter, DecodedMsg) of
+        true ->
+            case do_callback(Module, handle_message, [DecodedMsg, CallbackState]) of
+                {ok, NewCallbackState} ->
+                    notify_subscriber(Rest, DecodedMsg, NewCallbackState);
+                {terminate, Reason} ->
+                    {error, Reason}
+            end;
+        _ ->
+            notify_subscriber(Rest, DecodedMsg, CallbackState)
+    end.
+
+subscriber_filter(true, _DecodedMsg) -> true;
+subscriber_filter(Fn, DecodedMsg) when is_function(Fn) ->
+    % catch errors?
+    Fn(DecodedMsg).
+
 
 % XXX process commands through ofs_store
 send(Msg, State) ->
@@ -213,7 +253,7 @@ ping(_Timeout, _State) ->
     ok.
 
 subscribe(Module, in_packet, State) ->
-    subscribe(Module, {in_packet, fun always/1}, State);
+    subscribe(Module, {in_packet, true}, State);
 subscribe(_Module, {in_packet, _FilterFn}, _State) ->
     % XXX store subscription in ets?
     ok;
@@ -222,5 +262,3 @@ subscribe(_Module, _Item, _State) ->
 
 get_subscriptions(_Module, _State) ->
     ok.
-
-always(_) -> true.
