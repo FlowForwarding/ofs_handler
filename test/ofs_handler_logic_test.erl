@@ -23,7 +23,9 @@ all_test_() ->
         fun cleanup/1,
         [
             fun send_message/0,
-            fun sync_send_message/0
+            fun send_list_message/0,
+            fun sync_send_message/0,
+            fun sync_send_list_message/0
         ]
     }.
 
@@ -36,11 +38,9 @@ cleanup(ok) ->
     ok.
 
 send_message() ->
-    meck:new(of_driver),
+    mock_of_driver(),
+    mock_callback_handler(),
     meck:expect(of_driver, send, fun(?CONNECTION, ?MESSAGE) -> ok end),
-    meck:expect(of_driver, close_connection, fun(?CONNECTION) -> ok end),
-    meck:new(ofs_handler_default_handler),
-    meck:expect(ofs_handler_default_handler, init, fun(active, ?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?CONNECTION, ?CALLBACK_OPT) -> {ok, ?CALLBACK_STATE} end),
 
     ofs_handler_init(),
     ok = ofs_handler:send(?DATAPATHID, ?MESSAGE),
@@ -48,16 +48,27 @@ send_message() ->
     ?assert(meck:validate(of_driver)),
     ?assert(meck:validate(ofs_handler_default_handler)),
 
-    meck:unload(of_driver),
-    meck:unload(ofs_handler_default_handler),
+    unload_mocks(),
+    ok.
+
+send_list_message() ->
+    mock_of_driver(),
+    mock_callback_handler(),
+    meck:expect(of_driver, send_list, fun(?CONNECTION, [?MESSAGE, ?MESSAGE]) -> ok end),
+
+    ofs_handler_init(),
+    ok = ofs_handler:send_list(?DATAPATHID, [?MESSAGE, ?MESSAGE]),
+
+    ?assert(meck:validate(of_driver)),
+    ?assert(meck:validate(ofs_handler_default_handler)),
+
+    unload_mocks(),
     ok.
 
 sync_send_message() ->
-    meck:new(of_driver),
+    mock_of_driver(),
+    mock_callback_handler(),
     meck:expect(of_driver, sync_send, fun(?CONNECTION, ?MESSAGE) -> {ok, ?REPLY} end),
-    meck:expect(of_driver, close_connection, fun(?CONNECTION) -> ok end),
-    meck:new(ofs_handler_default_handler),
-    meck:expect(ofs_handler_default_handler, init, fun(active, ?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?CONNECTION, ?CALLBACK_OPT) -> {ok, ?CALLBACK_STATE} end),
 
     ofs_handler_init(),
     {ok, ?REPLY} = ofs_handler:sync_send(?DATAPATHID, ?MESSAGE),
@@ -65,8 +76,21 @@ sync_send_message() ->
     ?assert(meck:validate(of_driver)),
     ?assert(meck:validate(ofs_handler_default_handler)),
 
-    meck:unload(of_driver),
-    meck:unload(ofs_handler_default_handler),
+    unload_mocks(),
+    ok.
+
+sync_send_list_message() ->
+    mock_of_driver(),
+    mock_callback_handler(),
+    meck:expect(of_driver, sync_send_list, fun(?CONNECTION, [?MESSAGE, ?MESSAGE]) -> {ok, [{ok, ?REPLY}, {ok, ?REPLY}]} end),
+
+    ofs_handler_init(),
+    {ok, [{ok, ?REPLY}, {ok, ?REPLY}]} = ofs_handler:sync_send_list(?DATAPATHID, [?MESSAGE, ?MESSAGE]),
+
+    ?assert(meck:validate(of_driver)),
+    ?assert(meck:validate(ofs_handler_default_handler)),
+
+    unload_mocks(),
     ok.
 
 %% ----------------------------------------------------------------------------
@@ -82,3 +106,16 @@ stop_apps() ->
 
 ofs_handler_init() ->
     ofs_handler_driver:init(?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?CONNECTION, ?OPT).
+
+mock_of_driver() ->
+    meck:new(of_driver),
+    meck:expect(of_driver, close_connection, fun(?CONNECTION) -> ok end).
+
+mock_callback_handler() ->
+    meck:new(ofs_handler_default_handler),
+    meck:expect(ofs_handler_default_handler, init, fun(active, ?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?CONNECTION, ?CALLBACK_OPT) -> {ok, ?CALLBACK_STATE} end),
+    meck:expect(ofs_handler_default_handler, terminate, fun(_) -> ok end).
+
+unload_mocks() ->
+    meck:unload(of_driver),
+    meck:unload(ofs_handler_default_handler).
