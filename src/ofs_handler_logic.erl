@@ -119,6 +119,9 @@ handle_call({ping_switch, Timeout}, _From, State) ->
 handle_call({async_subscribe, Module, Item}, _From, State) ->
     Ret = subscribe(Module, Item, State),
     {reply, Ret, State};
+handle_call({async_unsubscribe, Module, Item}, _From, State) ->
+    Ret = unsubscribe(Module, Item, State),
+    {reply, Ret, State};
 handle_call({get_async_subscribe, Module}, _From, State) ->
     Ret = get_subscriptions(Module, State),
     {reply, Ret, State};
@@ -229,7 +232,7 @@ get_opt(Key, Options) ->
 notify(Message, State) ->
     Subscriptions = State#?STATE.subscriptions,
     CallbackState = State#?STATE.callback_state,
-    {MsgType, _} = DecodedMsg = of_msg_lib:decode(Message),
+    {MsgType, _, _} = DecodedMsg = of_msg_lib:decode(Message),
     Subscribers = ets:lookup(Subscriptions, MsgType),
     notify_subscriber(Subscribers, DecodedMsg, CallbackState).
 
@@ -274,13 +277,17 @@ sync_send_list(Msgs, State) ->
 ping(_Timeout, _State) ->
     ok.
 
-subscribe(Module, in_packet, State) ->
-    subscribe(Module, {in_packet, true}, State);
-subscribe(_Module, {in_packet, _FilterFn}, _State) ->
-    % XXX store subscription in ets?
-    ok;
-subscribe(_Module, _Item, _State) ->
+subscribe(Module, Type, State) when is_atom(Type) ->
+    subscribe(Module, {Type, true}, State);
+subscribe(Module, {Type, FilterFn}, #?STATE{subscriptions = Subscriptions}) ->
+    true =ets:insert(Subscriptions, {Type, Module, FilterFn}),
     ok.
 
-get_subscriptions(_Module, _State) ->
+unsubscribe(Module, Type, State) when is_atom(Type) ->
+    unsubscribe(Module, {Type, true}, State);
+unsubscribe(Module, {Type, FilterFn}, #?STATE{subscriptions = Subscriptions}) ->
+    true =ets:delete_object(Subscriptions, {Type, Module, FilterFn}),
     ok.
+
+get_subscriptions(Module, #?STATE{subscriptions = Subscriptions}) ->
+    ets:match_object(Subscriptions, {'_', Module, '_'}).

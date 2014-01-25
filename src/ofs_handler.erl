@@ -15,8 +15,9 @@
     sync_send/2,
     sync_send_list/2,
     ping_switch/1,
-    subscribe_async_message/3,
-    get_subscriptions_async_messages/2,
+    subscribe/3,
+    unsubscribe/3,
+    get_subscriptions/2,
     terminate/1
 ]).
 
@@ -48,10 +49,13 @@ ping_switch(DatapathId) ->
     % send echo, wait for response
     ofs_handler_logic:call_active(DatapathId, ping_switch).
 
-subscribe_async_message(DatapathId, Module, Item) ->
+subscribe(DatapathId, Module, Item) ->
     ofs_handler_logic:call_active(DatapathId, {async_subscribe, Module, Item}).
 
-get_subscriptions_async_messages(DatapathId, Module) ->
+unsubscribe(DatapathId, Module, Item) ->
+    ofs_handler_logic:call_active(DatapathId, {async_unsubscribe, Module, Item}).
+
+get_subscriptions(DatapathId, Module) ->
     ofs_handler_logic:call_active(DatapathId, {get_async_subscribe, Module}).
 
 terminate(DatapathId) ->
