@@ -1,6 +1,8 @@
 -module(ofs_handler_logic).
 
 -include("ofs_handler_logic.hrl").
+-include_lib("ofs_handler/include/ofs_handler_logger.hrl").
+
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
@@ -50,19 +52,18 @@ start_link(DatapathId) ->
     gen_server:start_link(?MODULE, [DatapathId], []).
 
 ofd_find_handler(DatapathId) ->
-    HandlerPid = case ets:lookup(?HANDLERS_TABLE, DatapathId) of
+    {ok,case ets:lookup(?HANDLERS_TABLE, DatapathId) of
         [] ->
             % spin up new ofs_handler
             {ok, Pid} = ofs_handler_logic_sup:start_child(DatapathId),
             % XXX put code to remove the entry in ets somewhere.
             true = ets:insert_new(?HANDLERS_TABLE, #handlers_table{
-                                                    datapath_id = DatapathId,
-                                                    handler_pid = Pid}),
+                                                   datapath_id = DatapathId,
+                                                   handler_pid = Pid}),
             Pid;
         [Handler = #handlers_table{}] ->
             Handler#handlers_table.handler_pid
-    end,
-    {ok, HandlerPid}.
+    end}.
 
 ofd_init(Pid, IpAddr, DatapathId, Features, Version, Connection, Opt) ->
     gen_server:call(Pid,
@@ -92,6 +93,21 @@ init([DatapathId]) ->
     gen_server:cast(self(), init),
     {ok, #?STATE{datapath_id = DatapathId}}.
 
+% handle callbacks from of_driver
+handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, 
+    State = #?STATE{datapath_id = DatapathId}) ->
+    % switch connected to of_driver.
+    % this is the main connection.
+    State1 = State#?STATE{
+        ipaddr = IpAddr,
+        features = Features,
+        of_version = Version,
+        main_connection = Connection,
+        aux_connections = [],
+        callback_mod = get_opt(callback_mod, Opt),
+        opt = Opt
+    },
+    {reply, {ok, self()}, State1};
 % handle API
 handle_call(get_features, _From, State) ->
     Ret = sync_send(get_features, State),
@@ -188,39 +204,27 @@ handle_call({get_async_subscribe, _Module}, _From, State) ->
     {reply, ok, State};
 handle_call(terminate, _From, State) ->
     {reply, ok, State};
-
-% handle callbacks from of_driver
-handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, State = #?STATE{datapath_id = DatapathId}) ->
-    % switch connected to of_driver.
-    % this is the main connection.
-    State1 = State#?STATE{
-        ipaddr = IpAddr,
-        features = Features,
-        of_version = Version,
-        main_connection = Connection,
-        aux_connections = [],
-        callback_mod = get_opt(callback_mod, Opt),
-        opt = Opt
-    },
-    {reply, {ok, self()}, State1};
 handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, AuxId, _Opt}, _From, State = #?STATE{aux_connections = AuxConnections}) ->
     State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
     % switch connected to of_driver.
     % this is an auxiliary connection.
     {reply, {ok, self()}, State1};
 handle_call({message, _Connection, _Message}, _From, State) ->
+    ?INFO("Got message from Driver...\n"),
     % switch sent us a message
     {reply, ok, State};
 handle_call({error, _Connection, _Reason}, _From, State) ->
     % error on the connection
     {reply, ok, State};
-handle_call({disconnect, Connection, Reason}, _From, State) ->
+handle_call({disconnect, Connection, Reason}, _From, #?STATE{ datapath_id = DatapathId } = State) ->
     % lost an auxiliary connection
+    ets:delete(?HANDLERS_TABLE,DatapathId),
     {reply, ok, State};
 handle_call({terminate_from_driver, Connection, Reason}, _From, State) ->
     % lost the main connection
     {stop, terminated_from_driver, ok, State};
-handle_call(_Request, _From, State) ->
+handle_call(Request, _From, State) ->
+    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_call [Request : ~p]",[Request]),
     % unknown request
     {reply, ok, State}.
 
@@ -243,18 +247,20 @@ handle_cast(init, State) ->
     },
     {noreply, State1};
 
-handle_cast(_Msg, State) ->
+handle_cast(Msg, State) ->
+    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_cast [Msg : ~p]",[Msg]),
     {noreply, State}.
 
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_info [Info : ~p]",[Info]),
     {noreply, State}.
 
-terminate(_Reason, #?STATE{
-                                main_connection = MainConn,
-                                callback_state = CallbackState,
-                                callback_mod = Module}) ->
+terminate(Reason, #?STATE{ main_connection = MainConn,
+                           callback_state = CallbackState,
+                           callback_mod = Module}) ->
     % remove self from datapath id map to avoid getting disconnect callbacks
-    of_driver:close_connection(MainConn),
+    ?WARNING("\n\n !!!!!!!!!! HandlerLogic : ~p",[Reason]),
+    %% of_driver:close_connection(MainConn),
     do_callback(Module, terminate, [CallbackState]),
     ok.
 
@@ -294,7 +300,7 @@ get_opt(Key, Options) ->
         {ok, V} -> V;
         undefined -> undefined
     end,
-    proplsits:get_value(Key, Options, Default).
+    proplists:get_value(Key, Options, Default).
 
 my_controller_mode(_Peer) ->
     active.

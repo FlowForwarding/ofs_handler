@@ -8,6 +8,8 @@
 -module(ofs_handler_driver).
 -copyright("2013, Erlang Solutions Ltd.").
 
+-include_lib("ofs_handler/include/ofs_handler_logger.hrl").
+
 % -type ip_address() :: string().
 % -type datapath_id() :: binary().
 % -type of_version() :: integer().
