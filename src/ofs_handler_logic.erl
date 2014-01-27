@@ -36,7 +36,8 @@
     ofd_error/3,
     ofd_disconnect/3,
     ofd_terminate/3,
-    call_active/2
+    call_active/2,
+    get_connections/1
 ]).
 
 %% ------------------------------------------------------------------
@@ -92,6 +93,9 @@ call_active(DatapathId, Command) ->
         no_handler -> no_handler;
         HandlerPid -> gen_server:call(HandlerPid, Command)
     end.
+
+get_connections(DatapathId) ->
+    call_active(DatapathId, get_connections).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
@@ -170,13 +174,19 @@ handle_call({message, _Connection, Message}, _From, State) ->
 handle_call({error, _Connection, _Reason}, _From, State) ->
     % error on the connection
     {reply, ok, State};
-handle_call({disconnect, _Connection, _Reason}, _From, #?STATE{ datapath_id = DatapathId } = State) ->
+handle_call({disconnect, Connection, _Reason}, _From, #?STATE{
+                                aux_connections = AuxConnections} = State) ->
     % lost an auxiliary connection
-    ets:delete(?HANDLERS_TABLE,DatapathId),
-    {reply, ok, State};
+    NewAuxConnections = lists:keydelete(Connection, 2, AuxConnections),
+    {reply, ok, State#?STATE{aux_connections = NewAuxConnections}};
 handle_call({terminate_from_driver, _Connection, _Reason}, _From, State) ->
     % lost the main connection
-    {stop, terminated_from_driver, ok, State};
+    {reply, ok, State#?STATE{main_connection = undefined}};
+handle_call(get_connections, _From, State) ->
+    % return connections
+    MainConnection = State#?STATE.main_connection,
+    AuxConnections = State#?STATE.aux_connections,
+    {reply, {MainConnection, AuxConnections}, State};
 handle_call(_Request, _From, State) ->
     % unknown request
     {reply, ok, State}.

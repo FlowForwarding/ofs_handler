@@ -11,6 +11,8 @@
 -define(IPADDR, {192,168,0,44}).
 -define(DATAPATHID, <<"datapathid">>).
 -define(CONNECTION, connection_pid).
+-define(AUXCONNECTION, aux_connection_pid).
+-define(AUXID, 1).
 -define(CALLBACK_OPT, [{call, back}, {options, here}]).
 -define(OPT, [{callback_module, ofs_handler_default_handler}, {callback_opt, ?CALLBACK_OPT}]).
 -define(MESSAGE, #ofp_message{}).
@@ -37,7 +39,8 @@ all_test_() ->
             fun sync_send_list_message/0,
             fun subscribe/0,
             fun message_echo_request/0,
-            fun message_packet_in/0
+            fun message_packet_in/0,
+            fun aux_connection/0
         ]
     }.
 
@@ -187,7 +190,18 @@ message_packet_in() ->
 
     ?assert(meck:validate(of_driver)),
     ?assert(meck:validate(ofs_handler_default_handler)),
+    unload_mocks(),
     ok.
+
+aux_connection() ->
+    mock_callback_handler(),
+    {ok, OFDriverCBStateMain} = ofs_handler_init(),
+    check_connections(true, 0),
+    {ok, OFDriverCBStateAux} = ofs_handler_driver:handle_connect(?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?AUXCONNECTION, ?AUXID, ?OPT),
+    check_connections(true, 1),
+    ok = ofs_handler_driver:handle_disconnect(normal, OFDriverCBStateAux),
+    ok = ofs_handler_driver:terminate(normal, OFDriverCBStateMain),
+    check_connections(false, 0).
 
 %% ----------------------------------------------------------------------------
 %% Test callback functions
@@ -238,3 +252,8 @@ packet_in(Data) ->
         cookie = ?PKIN_COOKIE,
         match = ?PKIN_MATCH,
         data = Data}).
+
+check_connections(Main, AuxCount) ->
+    {MainConnection, AuxConnections} = ofs_handler_logic:get_connections(?DATAPATHID),
+    ?assertEqual(Main, MainConnection /= undefined),
+    ?assertEqual(AuxCount, length(AuxConnections)).
