@@ -1,6 +1,8 @@
 -module(ofs_handler_logic).
 
 -include("ofs_handler_logic.hrl").
+-include_lib("ofs_handler/include/ofs_handler_logger.hrl").
+
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
@@ -187,10 +189,11 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #?STATE{main_connection = MainConn,
+terminate(Reason, #?STATE{main_connection = MainConn,
                            datapath_id = DatapathId,
                            callback_state = CallbackState,
                            callback_mod = Module}) ->
+    ?WARNING("OFS HANDLER logic terminate Reason : ~p\n",[Reason]),
     unregister_handler(DatapathId),
     of_driver:close_connection(MainConn),
     do_callback(Module, terminate, [CallbackState]),
