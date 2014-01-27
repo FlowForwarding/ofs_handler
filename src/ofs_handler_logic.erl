@@ -1,8 +1,6 @@
 -module(ofs_handler_logic).
 
 -include("ofs_handler_logic.hrl").
--include_lib("ofs_handler/include/ofs_handler_logger.hrl").
-
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
@@ -18,7 +16,8 @@
         callback_mod,
         callback_state,
         generation_id,
-        opt
+        opt,
+        subscriptions
     }
 ).
 
@@ -34,7 +33,8 @@
     ofd_message/3,
     ofd_error/3,
     ofd_disconnect/3,
-    ofd_terminate/3
+    ofd_terminate/3,
+    call_active/2
 ]).
 
 %% ------------------------------------------------------------------
@@ -52,18 +52,14 @@ start_link(DatapathId) ->
     gen_server:start_link(?MODULE, [DatapathId], []).
 
 ofd_find_handler(DatapathId) ->
-    {ok,case ets:lookup(?HANDLERS_TABLE, DatapathId) of
+    HandlerPid = case ets:lookup(?HANDLERS_TABLE, DatapathId) of
         [] ->
-            % spin up new ofs_handler
             {ok, Pid} = ofs_handler_logic_sup:start_child(DatapathId),
-            % XXX put code to remove the entry in ets somewhere.
-            true = ets:insert_new(?HANDLERS_TABLE, #handlers_table{
-                                                   datapath_id = DatapathId,
-                                                   handler_pid = Pid}),
             Pid;
         [Handler = #handlers_table{}] ->
             Handler#handlers_table.handler_pid
-    end}.
+    end,
+    {ok, HandlerPid}.
 
 ofd_init(Pid, IpAddr, DatapathId, Features, Version, Connection, Opt) ->
     gen_server:call(Pid,
@@ -86,181 +82,117 @@ ofd_terminate(Pid, Connection, Reason) ->
     gen_server:call(Pid, {terminate_from_driver, Connection, Reason}).
 
 %% ------------------------------------------------------------------
+%% utility functions
+%% ------------------------------------------------------------------
+
+call_active(DatapathId, Command) ->
+    case locate_active(DatapathId) of
+        no_handler -> no_handler;
+        HandlerPid -> gen_server:call(HandlerPid, Command)
+    end.
+
+%% ------------------------------------------------------------------
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
 init([DatapathId]) ->
-    gen_server:cast(self(), init),
-    {ok, #?STATE{datapath_id = DatapathId}}.
+    register_handler(DatapathId),
+    Subscriptions = ets:new(subscriptions, [bag, protected]),
+    {ok, #?STATE{datapath_id = DatapathId, subscriptions = Subscriptions}}.
 
+% handle API
+handle_call({send, Msg}, _From, State) ->
+    Ret = send(Msg, State),
+    {reply, Ret, State};
+handle_call({sync_send, Msg}, _From, State) ->
+    Ret = sync_send(Msg, State),
+    {reply, Ret, State};
+handle_call({send_list, Msg}, _From, State) ->
+    Ret = send_list(Msg, State),
+    {reply, Ret, State};
+handle_call({sync_send_list, Msg}, _From, State) ->
+    Ret = sync_send_list(Msg, State),
+    {reply, Ret, State};
+handle_call({ping_switch, Timeout}, _From, State) ->
+    Ret = ping(Timeout, State),
+    {reply, Ret, State};
+handle_call({async_subscribe, Module, Item}, _From, State) ->
+    Ret = subscribe(Module, Item, State),
+    {reply, Ret, State};
+handle_call({async_unsubscribe, Module, Item}, _From, State) ->
+    Ret = unsubscribe(Module, Item, State),
+    {reply, Ret, State};
+handle_call({get_async_subscribe, Module}, _From, State) ->
+    Ret = get_subscriptions(Module, State),
+    {reply, Ret, State};
+handle_call(terminate, _From, State) ->
+    {stop, terminated_by_call, ok, State}; 
 % handle callbacks from of_driver
-handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, 
-    State = #?STATE{datapath_id = DatapathId}) ->
+handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, State = #?STATE{datapath_id = DatapathId}) ->
     % switch connected to of_driver.
     % this is the main connection.
+    CallbackModule = get_opt(callback_module, Opt),
     State1 = State#?STATE{
         ipaddr = IpAddr,
         features = Features,
         of_version = Version,
         main_connection = Connection,
         aux_connections = [],
-        callback_mod = get_opt(callback_mod, Opt),
+        callback_mod = CallbackModule,
         opt = Opt
     },
-    {reply, {ok, self()}, State1};
-% handle API
-handle_call(get_features, _From, State) ->
-    Ret = sync_send(get_features, State),
-    {reply, Ret, State};
-handle_call(get_config, _From, State) ->
-    Ret = sync_send(get_config, State),
-    {reply, Ret, State};
-handle_call(get_description, _From, State) ->
-    Ret = sync_send(get_description, State),
-    {reply, Ret, State};
-handle_call({set_config, ConfigFlag, MissSendLength}, _From, State) ->
-    Ret = sync_send(set_config, [ConfigFlag, MissSendLength]),
-    {reply, Ret, State};
-handle_call({send_packet, Data, PortNumber, Actions}, _From, State) ->
-    Ret = sync_send(send_packet, [Data, PortNumber, Actions]),
-    {reply, Ret, State};
-handle_call(delete_all_flows, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_flows, _FlowMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call(deleted_all_groups, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_groups, _GroupMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_ports, _PortMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({modify_meters, _MeterMods}, _From, State) ->
-    % TODO
-    {reply, ok, State};
-handle_call({get_flow_statistics, _TableId, _Matches, _Options}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_aggregate_statistics, _TableId, _Matches, _Options}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_table_statistics, _From, State) ->
-    {reply, ok, State};
-handle_call({get_port_statistics, _PortNumber}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_queue_statistics, _PortNumber, _QueueId}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_group_statistics, _GroupId}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_meter_statistics, _MeterId}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_table_features, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_table_features, _From, State) ->
-    {reply, ok, State};
-handle_call({set_table_features, _TableFeatures}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_port_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_port_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_group_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_group_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_group_features, _From, State) ->
-    {reply, ok, State};
-handle_call({get_meter_configuration, _MeterId}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_auth_meter_configuration, _MeterId}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_meter_features, _From, State) ->
-    {reply, ok, State};
-handle_call(get_flow_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call(get_auth_flow_descriptions, _From, State) ->
-    {reply, ok, State};
-handle_call({experimenter, _ExpId, _Type, _Data}, _From, State) ->
-    {reply, ok, State};
-handle_call(barrier, _From, State) ->
-    {reply, ok, State};
-handle_call({get_queue_configuration, _PortNumber}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_queue_auth_configuration, _PortNumber}, _From, State) ->
-    {reply, ok, State};
-handle_call({set_role, _Role, _GenerationId}, _From, State) ->
-    {reply, ok, State};
-handle_call(get_async_configuration, _From, State) ->
-    {reply, ok, State};
-handle_call({set_async_configuration, _PacketInMask, _PortStatusMask, _FlowRemoveMask}, _From, State) ->
-    {reply, ok, State};
-handle_call(ping_switch, _From, State) ->
-    {reply, ok, State};
-handle_call({async_subscribe, _Module, _Items}, _From, State) ->
-    {reply, ok, State};
-handle_call({get_async_subscribe, _Module}, _From, State) ->
-    {reply, ok, State};
-handle_call(terminate, _From, State) ->
-    {reply, ok, State};
+    CallbackOpt = get_opt(callback_opt, Opt),
+    case do_callback(CallbackModule, init, [active, IpAddr, DatapathId, Features, Version, Connection, CallbackOpt]) of
+        {ok, CallbackState} ->
+            {reply, {ok, self()},
+                            State1#?STATE{callback_state = CallbackState}};
+        {erroerror, Reason} ->
+            signal_stop(),
+            {reply, {terminate, Reason}, State1}
+    end;
 handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, AuxId, _Opt}, _From, State = #?STATE{aux_connections = AuxConnections}) ->
     State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
     % switch connected to of_driver.
     % this is an auxiliary connection.
+    % XXX spawn connection handler
     {reply, {ok, self()}, State1};
-handle_call({message, _Connection, _Message}, _From, State) ->
-    ?INFO("Got message from Driver...\n"),
+handle_call({message, _Connection, Message}, _From, State) ->
     % switch sent us a message
-    {reply, ok, State};
+    case notify(Message, State) of
+        {ok, CallbackState} ->
+            {reply, ok, State#?STATE{callback_state = CallbackState}};
+        {terminate, Reason} ->
+            signal_stop(),
+            {reply, {terminate, Reason}, State}
+    end;
 handle_call({error, _Connection, _Reason}, _From, State) ->
     % error on the connection
     {reply, ok, State};
-handle_call({disconnect, Connection, Reason}, _From, #?STATE{ datapath_id = DatapathId } = State) ->
+handle_call({disconnect, _Connection, _Reason}, _From, #?STATE{ datapath_id = DatapathId } = State) ->
     % lost an auxiliary connection
     ets:delete(?HANDLERS_TABLE,DatapathId),
     {reply, ok, State};
-handle_call({terminate_from_driver, Connection, Reason}, _From, State) ->
+handle_call({terminate_from_driver, _Connection, _Reason}, _From, State) ->
     % lost the main connection
     {stop, terminated_from_driver, ok, State};
-handle_call(Request, _From, State) ->
-    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_call [Request : ~p]",[Request]),
+handle_call(_Request, _From, State) ->
     % unknown request
     {reply, ok, State}.
 
-% needs an initialization path that does not include a connection
-% two states - connected and not_connected
-handle_cast(init, State) ->
-    % callback module from opts
-    Module = get_opt(callback_module),
-
-    % controller peer from opts
-    Peer = get_opt(peer),
-
-    % callback module options
-    ModuleOpts = get_opt(callback_opts),
-
-    % find out if this controller is active or standby
-    Mode = my_controller_mode(Peer),
-
-    State1 = State#?STATE{
-    },
-    {noreply, State1};
-
-handle_cast(Msg, State) ->
-    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_cast [Msg : ~p]",[Msg]),
+handle_cast(stop, State) ->
+    {stop, normal, State};
+handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info(Info, State) ->
-    ?WARNING("\n\n !!!!!!!!!! Handling UNHANDLED handle_info [Info : ~p]",[Info]),
+handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(Reason, #?STATE{ main_connection = MainConn,
+terminate(_Reason, #?STATE{main_connection = MainConn,
+                           datapath_id = DatapathId,
                            callback_state = CallbackState,
                            callback_mod = Module}) ->
-    % remove self from datapath id map to avoid getting disconnect callbacks
-    ?WARNING("\n\n !!!!!!!!!! HandlerLogic : ~p",[Reason]),
-    %% of_driver:close_connection(MainConn),
+    unregister_handler(DatapathId),
+    of_driver:close_connection(MainConn),
     do_callback(Module, terminate, [CallbackState]),
     ok.
 
@@ -271,29 +203,25 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+locate_active(DatapathId) ->
+    case ets:lookup(?HANDLERS_TABLE, DatapathId) of
+        [] -> no_handler;
+        [#handlers_table{handler_pid = HandlerPid}] -> HandlerPid
+    end.
+
+register_handler(DatapathId) ->
+    true = ets:insert_new(?HANDLERS_TABLE, #handlers_table{
+                                                datapath_id = DatapathId,
+                                                handler_pid = self()}).
+
+unregister_handler(DatapathId) ->
+    true = ets:delete(?HANDLERS_TABLE, DatapathId).
+
+signal_stop() ->
+    gen_server:cast(self(), stop).
+
 do_callback(Module, Function, Args) ->
     erlang:apply(Module, Function, Args).
-
-tell_controller_mode(Connection, active, State = #?STATE{
-                                            generation_id = GenId,
-                                            main_connection = Connection,
-                                            of_version = Version}) ->
-    Msg = ofs_msg_lib:set_role(Version, master, GenId),
-    State1 = State#?STATE{generation_id = next_generation_id(GenId)},
-    case of_driver:sync_send(Connection, Msg) of
-        {error, Reason} ->
-            {error, Reason, State1};
-        {ok, _Reply} ->
-            {ok, State1}
-    end;
-tell_controller_mode(_Connection, standby, _State) ->
-    ok.
-
-next_generation_id(GenId) ->
-    GenId + 1.
-
-get_opt(Key) ->
-    get_opt(Key, []).
 
 get_opt(Key, Options) ->
     Default = case application:get_env(ofs_handler, Key) of
@@ -302,26 +230,65 @@ get_opt(Key, Options) ->
     end,
     proplists:get_value(Key, Options, Default).
 
-my_controller_mode(_Peer) ->
-    active.
+notify(Message, State) ->
+    Subscriptions = State#?STATE.subscriptions,
+    CallbackState = State#?STATE.callback_state,
+    {MsgType, _, _} = DecodedMsg = of_msg_lib:decode(Message),
+    Subscribers = ets:lookup(Subscriptions, MsgType),
+    notify_subscriber(Subscribers, DecodedMsg, CallbackState).
 
-tell_standby(generation_id, State) ->
-    {ok, State}.
-
-sync_send(MsgFn, State) ->
-    sync_send(MsgFn, [], State).
-
-sync_send(MsgFn, Args, State) ->
-    Conn = State#?STATE.main_connection,
-    Version = State#?STATE.of_version,
-    case of_driver:sync_send(Conn,
-                            apply(of_msg_lib, MsgFn, [Version | Args])) of
-        {ok, noreply} ->
-            noreply;
-        {ok, Reply} ->
-            {Name, _Xid, Res} = of_msg_lib:decode(Reply),
-            {Name, Res};
-        Error ->
-            % {error, Reason}
-            Error
+notify_subscriber([], _Message, CallbackState) ->
+    {ok, CallbackState};
+notify_subscriber([{_Type, Module, Filter}|Rest], DecodedMsg, CallbackState) ->
+    case subscriber_filter(Filter, DecodedMsg) of
+        true ->
+            case do_callback(Module, handle_message, [DecodedMsg, CallbackState]) of
+                {ok, NewCallbackState} ->
+                    notify_subscriber(Rest, DecodedMsg, NewCallbackState);
+                {terminate, Reason} ->
+                    {error, Reason}
+            end;
+        _ ->
+            notify_subscriber(Rest, DecodedMsg, CallbackState)
     end.
+
+subscriber_filter(true, _DecodedMsg) -> true;
+subscriber_filter(Fn, DecodedMsg) when is_function(Fn) ->
+    % catch errors?
+    Fn(DecodedMsg).
+
+
+% XXX process commands through ofs_store
+send(Msg, State) ->
+    Conn = State#?STATE.main_connection,
+    of_driver:send(Conn, Msg).
+
+sync_send(Msg, State) ->
+    Conn = State#?STATE.main_connection,
+    of_driver:sync_send(Conn, Msg).
+
+send_list(Msgs, State) ->
+    Conn = State#?STATE.main_connection,
+    of_driver:send_list(Conn, Msgs).
+
+sync_send_list(Msgs, State) ->
+    Conn = State#?STATE.main_connection,
+    of_driver:sync_send_list(Conn, Msgs).
+
+ping(_Timeout, _State) ->
+    ok.
+
+subscribe(Module, Type, State) when is_atom(Type) ->
+    subscribe(Module, {Type, true}, State);
+subscribe(Module, {Type, FilterFn}, #?STATE{subscriptions = Subscriptions}) ->
+    true =ets:insert(Subscriptions, {Type, Module, FilterFn}),
+    ok.
+
+unsubscribe(Module, Type, State) when is_atom(Type) ->
+    unsubscribe(Module, {Type, true}, State);
+unsubscribe(Module, {Type, FilterFn}, #?STATE{subscriptions = Subscriptions}) ->
+    true =ets:delete_object(Subscriptions, {Type, Module, FilterFn}),
+    ok.
+
+get_subscriptions(Module, #?STATE{subscriptions = Subscriptions}) ->
+    ets:match_object(Subscriptions, {'_', Module, '_'}).

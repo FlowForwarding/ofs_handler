@@ -14,11 +14,11 @@
 
 start(_StartType, _StartArgs) ->
     case ofs_handler_logic_sup:start_link() of
-		{ok, Pid} ->
-	    	{ok, Pid};
-		Error ->
-	    	Error
-	end.
+	{ok, Pid} ->
+	    {ok, Pid};
+	Error ->
+	    Error
+    end.
 
 stop(_State) ->
     ok.
