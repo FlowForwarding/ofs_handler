@@ -119,9 +119,6 @@ handle_call({send_list, Msg}, _From, State) ->
 handle_call({sync_send_list, Msg}, _From, State) ->
     Ret = sync_send_list(Msg, State),
     {reply, Ret, State};
-handle_call({ping_switch, Timeout}, _From, State) ->
-    Ret = ping(Timeout, State),
-    {reply, Ret, State};
 handle_call({async_subscribe, Module, Item}, _From, State) ->
     Ret = subscribe(Module, Item, State),
     {reply, Ret, State};
@@ -146,7 +143,6 @@ handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt},
         ipaddr = IpAddr,
         features = Features,
         of_version = Version,
-        main_connection = Connection,
         aux_connections = [],
         callback_mod = CallbackModule,
         opt = Opt
@@ -159,7 +155,8 @@ handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt},
                                     CallbackState, Subscriptions),
             true = link(MessagePid),
             {reply, {ok, MessagePid},
-                            State1#?STATE{callback_state = CallbackState}};
+                            State1#?STATE{main_connection = Connection,
+                                          callback_state = CallbackState}};
         {error, Reason} ->
             {reply, {terminate, Reason}, State1}
     end;
@@ -273,9 +270,6 @@ send_list(Msgs, State) ->
 sync_send_list(Msgs, State) ->
     Conn = State#?STATE.main_connection,
     of_driver:sync_send_list(Conn, Msgs).
-
-ping(_Timeout, _State) ->
-    ok.
 
 subscribe(Module, Type, State) when is_atom(Type) ->
     subscribe(Module, {Type, true}, State);
