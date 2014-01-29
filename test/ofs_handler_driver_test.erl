@@ -64,13 +64,13 @@ error_calls_handler() ->
 
 disconnect_calls_handler() ->
     {ok, State} = ofd_init(),
-    meck:expect(ofs_handler_logic, ofd_disconnect, fun(?CONNECTIONPID, ?CONNECTION, ?REASON) -> ok end),
+    meck:expect(ofs_handler_logic, ofd_disconnect, fun(?PID, ?CONNECTIONPID, ?CONNECTION, ?REASON) -> ok end),
     ok = ofs_handler_driver:handle_disconnect(?REASON, State),
     ?assert(meck:validate(ofs_handler_logic)).
 
 terminate_calls_handler() ->
     {ok, State} = ofd_init(),
-    meck:expect(ofs_handler_logic, ofd_terminate, fun(?CONNECTIONPID, ?CONNECTION, ?REASON) -> ok end),
+    meck:expect(ofs_handler_logic, ofd_terminate, fun(?PID, ?CONNECTIONPID, ?CONNECTION, ?REASON) -> ok end),
     ok = ofs_handler_driver:terminate(?REASON, State),
     ?assert(meck:validate(ofs_handler_logic)).
 

@@ -34,8 +34,8 @@
     ofd_connect/8,
     ofd_message/3,
     ofd_error/3,
-    ofd_disconnect/3,
-    ofd_terminate/3,
+    ofd_disconnect/4,
+    ofd_terminate/4,
     call_active/2,
     get_connections/1
 ]).
@@ -64,25 +64,25 @@ ofd_find_handler(DatapathId) ->
     end,
     {ok, HandlerPid}.
 
-ofd_init(Pid, IpAddr, DatapathId, Features, Version, Connection, Opt) ->
-    gen_server:call(Pid,
+ofd_init(HandlerPid, IpAddr, DatapathId, Features, Version, Connection, Opt) ->
+    gen_server:call(HandlerPid,
             {init, IpAddr, DatapathId, Features, Version, Connection, Opt}).
 
-ofd_connect(Pid, IpAddr, DatapathId, Features, Version, Connection, AuxId, Opt) ->
-    gen_server:call(Pid,
+ofd_connect(HandlerPid, IpAddr, DatapathId, Features, Version, Connection, AuxId, Opt) ->
+    gen_server:call(HandlerPid,
             {connect, IpAddr, DatapathId, Features, Version, Connection, AuxId, Opt}).
 
-ofd_message(Pid, Connection, Msg) ->
-    gen_server:call(Pid, {message, Connection, Msg}).
+ofd_message(MessagePid, Connection, Msg) ->
+    gen_server:call(MessagePid, {message, Connection, Msg}).
 
-ofd_error(Pid, Connection, Error) ->
-    gen_server:call(Pid, {error, Connection, Error}).
+ofd_error(MessagePid, Connection, Error) ->
+    gen_server:call(MessagePid, {error, Connection, Error}).
 
-ofd_disconnect(Pid, Connection, Reason) ->
-    gen_server:call(Pid, {disconnect, Connection, Reason}).
+ofd_disconnect(HandlerPid, MessagePid, Connection, Reason) ->
+    gen_server:call(HandlerPid, {disconnect, MessagePid, Connection, Reason}).
 
-ofd_terminate(Pid, Connection, Reason) ->
-    gen_server:call(Pid, {terminate_from_driver, Connection, Reason}).
+ofd_terminate(HandlerPid, MessagePid, Connection, Reason) ->
+    gen_server:call(HandlerPid, {terminate, MessagePid, Connection, Reason}).
 
 %% ------------------------------------------------------------------
 %% utility functions
@@ -132,12 +132,16 @@ handle_call({get_async_subscribe, Module}, _From, State) ->
     Ret = get_subscriptions(Module, State),
     {reply, Ret, State};
 handle_call(terminate, _From, State) ->
-    {stop, terminated_by_call, ok, State}; 
+    signal_stop(terminated_by_call),
+    {reply, ok, State}; 
 % handle callbacks from of_driver
-handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _From, State = #?STATE{datapath_id = DatapathId}) ->
+handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt},
+                    _From, State = #?STATE{datapath_id = DatapathId,
+                                           subscriptions = Subscriptions}) ->
     % switch connected to of_driver.
     % this is the main connection.
     CallbackModule = get_opt(callback_module, Opt),
+    CallbackOpt = get_opt(callback_opt, Opt),
     State1 = State#?STATE{
         ipaddr = IpAddr,
         features = Features,
@@ -147,40 +151,49 @@ handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt}, _Fro
         callback_mod = CallbackModule,
         opt = Opt
     },
-    CallbackOpt = get_opt(callback_opt, Opt),
-    case do_callback(CallbackModule, init, [active, IpAddr, DatapathId, Features, Version, Connection, CallbackOpt]) of
+    case do_callback(CallbackModule, init, [active, IpAddr, DatapathId,
+                            Features, Version, Connection, CallbackOpt]) of
         {ok, CallbackState} ->
-            {reply, {ok, self()},
+            {ok, MessagePid} = ofs_handler_message_sup:start_child(
+                                    Connection, main, CallbackModule,
+                                    CallbackState, Subscriptions),
+            true = link(MessagePid),
+            {reply, {ok, MessagePid},
                             State1#?STATE{callback_state = CallbackState}};
-        {erroerror, Reason} ->
-            signal_stop(),
+        {error, Reason} ->
             {reply, {terminate, Reason}, State1}
     end;
-handle_call({connect, _IpAddr, _DatapathId, _Features, _Version, Connection, AuxId, _Opt}, _From, State = #?STATE{aux_connections = AuxConnections}) ->
-    State1 = State#?STATE{aux_connections = [{AuxId, Connection} | AuxConnections]},
+handle_call({connect, IpAddr, DatapathId, Features,
+                    Version, Connection, AuxId, Opt}, _From,
+                    State = #?STATE{aux_connections = AuxConnections,
+                                    subscriptions = Subscriptions}) ->
     % switch connected to of_driver.
     % this is an auxiliary connection.
-    % XXX spawn connection handler
-    {reply, {ok, self()}, State1};
-handle_call({message, _Connection, Message}, _From, State) ->
-    % switch sent us a message
-    case notify(Message, State) of
+    CallbackModule = get_opt(callback_module, Opt),
+    CallbackOpt = get_opt(callback_opt, Opt),
+    case do_callback(CallbackModule, connect, [active, IpAddr, DatapathId,
+                        Features, Version, Connection, AuxId, CallbackOpt]) of
         {ok, CallbackState} ->
-            {reply, ok, State#?STATE{callback_state = CallbackState}};
-        {terminate, Reason} ->
-            signal_stop(),
+            {ok, MessagePid} = ofs_handler_message_sup:start_child(
+                                    Connection, AuxId, CallbackModule,
+                                    CallbackState, Subscriptions),
+            true = link(MessagePid),
+            State1 = State#?STATE{
+                aux_connections = [{AuxId, Connection} | AuxConnections],
+                callback_state = CallbackState},
+            {reply, {ok, MessagePid}, State1};
+        {error, Reason} ->
             {reply, {terminate, Reason}, State}
     end;
-handle_call({error, _Connection, _Reason}, _From, State) ->
-    % error on the connection
-    {reply, ok, State};
-handle_call({disconnect, Connection, _Reason}, _From, #?STATE{
+handle_call({disconnect, MessagePid, Connection, Reason}, _From, #?STATE{
                                 aux_connections = AuxConnections} = State) ->
     % lost an auxiliary connection
+    ok = ofs_handler_message:disconnect(MessagePid, Reason),
     NewAuxConnections = lists:keydelete(Connection, 2, AuxConnections),
     {reply, ok, State#?STATE{aux_connections = NewAuxConnections}};
-handle_call({terminate_from_driver, _Connection, _Reason}, _From, State) ->
+handle_call({terminate, MessagePid, _Connection, Reason}, _From, State) ->
     % lost the main connection
+    ok = ofs_handler_message:disconnect(MessagePid, Reason),
     {reply, ok, State#?STATE{main_connection = undefined}};
 handle_call(get_connections, _From, State) ->
     % return connections
@@ -199,13 +212,11 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(Reason, #?STATE{main_connection = MainConn,
-                           datapath_id = DatapathId,
-                           callback_state = CallbackState,
-                           callback_mod = Module}) ->
-    ?WARNING("OFS HANDLER logic terminate Reason : ~p\n",[Reason]),
+terminate(Reason, #?STATE{datapath_id = DatapathId,
+                          callback_state = CallbackState,
+                          callback_mod = Module}) ->
+    ?WARNING("OFS HANDLER logic terminate Reason : ~p",[Reason]),
     unregister_handler(DatapathId),
-    of_driver:close_connection(MainConn),
     do_callback(Module, terminate, [CallbackState]),
     ok.
 
@@ -230,9 +241,12 @@ register_handler(DatapathId) ->
 unregister_handler(DatapathId) ->
     true = ets:delete(?HANDLERS_TABLE, DatapathId).
 
-signal_stop() ->
+signal_stop(Reason) ->
+    ?INFO("ofs_handler(~p) stopping: ~p", [self(), Reason]),
     gen_server:cast(self(), stop).
 
+do_callback(undefined,_, _) ->
+    ok;
 do_callback(Module, Function, Args) ->
     erlang:apply(Module, Function, Args).
 
@@ -242,34 +256,6 @@ get_opt(Key, Options) ->
         undefined -> undefined
     end,
     proplists:get_value(Key, Options, Default).
-
-notify(Message, State) ->
-    Subscriptions = State#?STATE.subscriptions,
-    CallbackState = State#?STATE.callback_state,
-    {MsgType, _, _} = DecodedMsg = of_msg_lib:decode(Message),
-    Subscribers = ets:lookup(Subscriptions, MsgType),
-    notify_subscriber(Subscribers, DecodedMsg, CallbackState).
-
-notify_subscriber([], _Message, CallbackState) ->
-    {ok, CallbackState};
-notify_subscriber([{_Type, Module, Filter}|Rest], DecodedMsg, CallbackState) ->
-    case subscriber_filter(Filter, DecodedMsg) of
-        true ->
-            case do_callback(Module, handle_message, [DecodedMsg, CallbackState]) of
-                {ok, NewCallbackState} ->
-                    notify_subscriber(Rest, DecodedMsg, NewCallbackState);
-                {terminate, Reason} ->
-                    {error, Reason}
-            end;
-        _ ->
-            notify_subscriber(Rest, DecodedMsg, CallbackState)
-    end.
-
-subscriber_filter(true, _DecodedMsg) -> true;
-subscriber_filter(Fn, DecodedMsg) when is_function(Fn) ->
-    % catch errors?
-    Fn(DecodedMsg).
-
 
 % XXX process commands through ofs_store
 send(Msg, State) ->

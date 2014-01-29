@@ -27,6 +27,7 @@
 -define(PKIN_TABLE_ID, 1).
 -define(PKIN_COOKIE, <<-1:64>>).
 -define(PKIN_MATCH, #ofp_match{}).
+-define(REASON, error_reason).
 
 all_test_() ->
     {foreach,
@@ -40,7 +41,8 @@ all_test_() ->
             fun subscribe/0,
             fun message_echo_request/0,
             fun message_packet_in/0,
-            fun aux_connection/0
+            fun aux_connection/0,
+            fun handle_error/0
         ]
     }.
 
@@ -151,7 +153,7 @@ message_echo_request() ->
                 fun(Msg, CallbackState) ->
                     ?assertEqual(of_msg_lib:decode(?ECHO_REQUEST), Msg),
                     ?assertEqual(?CALLBACK_STATE, CallbackState),
-                    {ok, CallbackState}
+                    ok
                 end),
 
     ok = ofs_handler:subscribe(?DATAPATHID, test_receiver, echo_request),
@@ -176,7 +178,7 @@ message_packet_in() ->
                     ?assertEqual(
                             of_msg_lib:decode(packet_in(?MATCH_DATA)), Msg),
                     ?assertEqual(?CALLBACK_STATE, CallbackState),
-                    {ok, CallbackState}
+                    ok
                 end),
 
     ok = ofs_handler:subscribe(?DATAPATHID, test_receiver, {packet_in, fun ?MODULE:packet_filter/1}),
@@ -184,6 +186,7 @@ message_packet_in() ->
     ?assertNot(meck:called(test_receiver, handle_message, ['_','_'])),
 
     {ok, OfDriverCBState} = ofs_handler_driver:handle_message(packet_in(?MATCH_DATA), OfDriverCBState),
+    % handle message is asynchronous
     ?assert(meck:called(test_receiver, handle_message, ['_','_'])),
 
     ok = ofs_handler:unsubscribe(?DATAPATHID, test_receiver, {packet_in, fun ?MODULE:packet_filter/1}),
@@ -202,6 +205,26 @@ aux_connection() ->
     ok = ofs_handler_driver:handle_disconnect(normal, OFDriverCBStateAux),
     ok = ofs_handler_driver:terminate(normal, OFDriverCBStateMain),
     check_connections(false, 0).
+
+handle_error() ->
+    mock_of_driver(),
+    mock_callback_handler(),
+    {ok, OfDriverCBState} = ofs_handler_init(),
+    meck:expect(ofs_handler_default_handler, handle_error,
+                fun(Reason, CallbackState) ->
+                    ?assertEqual(?REASON, Reason),
+                    ?assertEqual(?CALLBACK_STATE, CallbackState),
+                    ok
+                end),
+
+    {ok, OfDriverCBState} = ofs_handler_driver:handle_error(?REASON, OfDriverCBState),
+
+    ?assert(meck:called(ofs_handler_default_handler, handle_error, ['_','_'])),
+    ?assert(meck:validate(of_driver)),
+    ?assert(meck:validate(ofs_handler_default_handler)),
+
+    unload_mocks(),
+    ok.
 
 %% ----------------------------------------------------------------------------
 %% Test callback functions
@@ -232,6 +255,7 @@ mock_of_driver() ->
 mock_callback_handler() ->
     meck:new(ofs_handler_default_handler),
     meck:expect(ofs_handler_default_handler, init, fun(active, ?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?CONNECTION, ?CALLBACK_OPT) -> {ok, ?CALLBACK_STATE} end),
+    meck:expect(ofs_handler_default_handler, connect, fun(active, ?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?AUXCONNECTION, ?AUXID, ?CALLBACK_OPT) -> {ok, ?CALLBACK_STATE} end),
     meck:expect(ofs_handler_default_handler, terminate, fun(_) -> ok end).
 
 mock_test_receiver() ->

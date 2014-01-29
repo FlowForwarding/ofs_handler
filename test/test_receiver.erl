@@ -4,4 +4,4 @@
 
 filterfn(_) -> true.
 
-handle_message(_Msg, State) -> {ok, State}.
+handle_message(_Msg, State) -> ok.

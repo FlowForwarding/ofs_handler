@@ -29,26 +29,27 @@
 -define(STATE, ofs_handler_driver_state).
 -record(?STATE, {
     handler_pid :: pid(),
+    message_pid :: pid(),
     connection
     }).
 
 % of_driver callbacks
 init(IpAddr, DataPathId, Features, Version, Connection, Opt) ->
     {ok, Pid} = ofs_handler_logic:ofd_find_handler(DataPathId),
-    {ok, ConnPid} = ofs_handler_logic:ofd_init(Pid,
+    {ok, MessagePid} = ofs_handler_logic:ofd_init(Pid,
                     IpAddr, DataPathId, Features, Version, Connection, Opt),
-    {ok, #?STATE{handler_pid = ConnPid, connection = Connection}}.
+    {ok, #?STATE{handler_pid = Pid, message_pid = MessagePid, connection = Connection}}.
 
 handle_connect(IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt) ->
     {ok, Pid} = ofs_handler_logic:ofd_find_handler(DataPathId),
-    {ok, ConnPid} = ofs_handler_logic:ofd_connect(Pid,
+    {ok, MessagePid} = ofs_handler_logic:ofd_connect(Pid,
                 IpAddr, DataPathId, Features, Version, Connection, AuxId, Opt),
-    {ok, #?STATE{handler_pid = ConnPid, connection = Connection}}.
+    {ok, #?STATE{handler_pid = Pid, message_pid = MessagePid, connection = Connection}}.
 
 handle_message(Msg, State = #?STATE{
-                                handler_pid = ConnPid,
+                                message_pid = MessagePid,
                                 connection = Connection}) ->
-    case ofs_handler_logic:ofd_message(ConnPid, Connection, Msg) of
+    case ofs_handler_logic:ofd_message(MessagePid, Connection, Msg) of
         ok ->
             {ok, State};
         {terminate, Reason} ->
@@ -56,9 +57,9 @@ handle_message(Msg, State = #?STATE{
     end.
 
 handle_error(Error, State = #?STATE{
-                                handler_pid = ConnPid,
+                                message_pid = MessagePid,
                                 connection = Connection}) ->
-    case ofs_handler_logic:ofd_error(ConnPid, Connection, Error) of
+    case ofs_handler_logic:ofd_error(MessagePid, Connection, Error) of
         ok ->
             {ok, State};
         {terminate, Reason} ->
@@ -66,11 +67,13 @@ handle_error(Error, State = #?STATE{
     end.
 
 handle_disconnect(Reason, #?STATE{
-                                handler_pid = ConnPid,
+                                handler_pid = Pid,
+                                message_pid = MessagePid,
                                 connection = Connection}) ->
-    ok = ofs_handler_logic:ofd_disconnect(ConnPid, Connection, Reason).
+    ok = ofs_handler_logic:ofd_disconnect(Pid, MessagePid, Connection, Reason).
 
 terminate(Reason, #?STATE{
-                                handler_pid = ConnPid,
+                                handler_pid = Pid,
+                                message_pid = MessagePid,
                                 connection = Connection}) ->
-    ok = ofs_handler_logic:ofd_terminate(ConnPid, Connection, Reason).
+    ok = ofs_handler_logic:ofd_terminate(Pid, MessagePid, Connection, Reason).
