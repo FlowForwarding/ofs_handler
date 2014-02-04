@@ -102,14 +102,7 @@
 ]).
 
 -include_lib("of_protocol/include/of_protocol.hrl").
-
--type datapath_mac() :: binary().
--type datapath_lsid() :: integer().
--type datapath_id() :: {datapath_lsid(), datapath_mac()}.
--type error_reason() :: atom().
--type subscription_type() :: atom().
--type subscription_filter() :: function().
--type subscription_item() :: subscription_type() | {subscription_type(), subscription_filter()}.
+-include("ofs_handler.hrl").
 
 %%% ===========================================================================
 %%% Public API
