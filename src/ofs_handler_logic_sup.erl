@@ -2,7 +2,7 @@
 %%% @copyright (C) 1999-2013, Erlang Solutions Ltd
 %%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
 %%% @doc 
-%%% 
+%%% ofs_handler_logic supervisor.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(ofs_handler_logic_sup).

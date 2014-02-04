@@ -1,4 +1,12 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Marc Sugiyama <marc.sugiyama@erlang-solutions.com>
+%%% @doc
+%%% ofs_handler logic.
+%%% @end
+%%%-------------------------------------------------------------------
 -module(ofs_handler_logic).
+-copyright("2013, Erlang Solutions Ltd.").
 
 -include("ofs_handler_logic.hrl").
 -include_lib("ofs_handler/include/ofs_handler_logger.hrl").

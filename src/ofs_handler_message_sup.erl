@@ -1,8 +1,8 @@
 %%%-------------------------------------------------------------------
 %%% @copyright (C) 1999-2013, Erlang Solutions Ltd
-%%% @author Ruan Pienaar <ruan.pienaar@erlang-solutions.com>
-%%% @doc 
-%%% 
+%%% @author Marc Sugiyama <marc.sugiyama@erlang-solutions.com>
+%%% @doc
+%%% ofs_handler_message supervisor.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(ofs_handler_message_sup).

@@ -1,4 +1,13 @@
+%%%-------------------------------------------------------------------
+%%% @copyright (C) 1999-2013, Erlang Solutions Ltd
+%%% @author Marc Sugiyama <marc.sugiyama@erlang-solutions.com>
+%%% @doc
+%%% Default callback handler for ofs_handler callbacks.  Returns
+%%% errors on connection attempts.
+%%% @end
+%%%-------------------------------------------------------------------
 -module(ofs_handler_default_handler).
+-copyright("2013, Erlang Solutions Ltd.").
 
 % default callback handler for ofs_handler
 
