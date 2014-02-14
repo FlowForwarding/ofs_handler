@@ -86,8 +86,9 @@ handle_call({message, _Connection, Message}, _From, State) ->
     end,
     {reply, ok, State};
 handle_call({disconnect, Reason}, _From, State) ->
+    % connection closed
     signal_stop(Reason),
-    {reply, ok, State};
+    {reply, ok, State#?STATE{connection = undefined}};
 handle_call(_Request, _From, State) ->
     % unknown request
     {reply, ok, State}.
@@ -104,8 +105,8 @@ terminate(Reason, #?STATE{connection = Connection,
                           auxid = AuxId,
                           callback_state = CallbackState,
                           callback_mod = Module}) ->
-    ?WARNING("OFS HANDLER connection terminate Reason : ~p",[Reason]),
-    of_driver:close_connection(Connection),
+    ?WARNING("[~p] terminate reason(~p)", [?MODULE, Reason]),
+    close_connection(Connection),
     case AuxId of
         main ->
             do_callback(Module, terminate, [CallbackState]);
@@ -120,6 +121,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
+
+close_connection(undefined) ->
+    % connection is already closed
+    ok;
+close_connection(Connection) ->
+    of_driver:close_connection(Connection).
 
 signal_stop(Reason) ->
     ?INFO("ofs_handler(~p) stopping: ~p", [self(), Reason]),
