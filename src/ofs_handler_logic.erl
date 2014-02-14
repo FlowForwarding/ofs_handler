@@ -220,7 +220,8 @@ handle_info(_Info, State) ->
 terminate(Reason, #?STATE{datapath_id = DatapathId,
                           callback_state = CallbackState,
                           callback_mod = Module}) ->
-    ?WARNING("OFS HANDLER logic terminate Reason : ~p",[Reason]),
+    ?WARNING("[~p] terminate datapathId(~p) reason(~p)",
+                                            [?MODULE, DatapathId, Reason]),
     unregister_handler(DatapathId),
     do_callback(Module, terminate, [CallbackState]),
     ok.
