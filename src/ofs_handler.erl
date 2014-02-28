@@ -197,7 +197,8 @@ ping_switch(DatapathId) ->
 % sends a message of that type to ofs_handler, ofs_handler calls the
 % filter function with the message.  The message is a ofp_message record.
 % If the filter function returns true, ofs_handler
-% calls Module:handle_message/2 with the message.  Otherwise, ofs_handler
+% calls Module:handle_message/2 with the message and callback state
+% returned by init or connect.  Otherwise, ofs_handler
 % discards the message.
 %
 % Messages with no subscriptions are discarded.
