@@ -116,12 +116,10 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(Reason, #?STATE{connection = Connection,
-                          auxid = AuxId,
+terminate(Reason, #?STATE{auxid = AuxId,
                           callback_state = CallbackState,
                           callback_mod = Module}) ->
     ?WARNING("[~p] terminate reason(~p)", [?MODULE, Reason]),
-    close_connection(Connection),
     case AuxId of
         main ->
             do_callback(Module, terminate, [CallbackState]);
@@ -136,12 +134,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
-
-close_connection(undefined) ->
-    % connection is already closed
-    ok;
-close_connection(Connection) ->
-    of_driver:close_connection(Connection).
 
 signal_stop(Reason) ->
     ?INFO("ofs_handler(~p) stopping: ~p", [self(), Reason]),

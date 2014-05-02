@@ -151,8 +151,8 @@ handle_call({async_unsubscribe, Module, Item}, _From, State) ->
 handle_call({get_async_subscribe, Module}, _From, State) ->
     Ret = get_subscriptions(Module, State),
     {reply, Ret, State};
-handle_call(terminate, _From, State) ->
-    signal_stop(terminated_by_call),
+handle_call(terminate, _From, State = #?STATE{main_connection = Connection}) ->
+    ok = of_driver:close_connection(Connection),
     {reply, ok, State}; 
 % handle callbacks from of_driver
 handle_call({init, IpAddr, DatapathId, Features, Version, Connection, Opt},
@@ -197,7 +197,6 @@ handle_call({connect, IpAddr, DatapathId, Features,
             {ok, MessagePid} = ofs_handler_message_sup:start_child(
                                     Connection, AuxId, CallbackModule,
                                     CallbackState, Subscriptions),
-            true = link(MessagePid),
             State1 = State#?STATE{
                 aux_connections = [{AuxId, Connection} | AuxConnections],
                 callback_state = CallbackState},
@@ -210,11 +209,15 @@ handle_call({disconnect, MessagePid, Connection, Reason}, _From, #?STATE{
     % lost an auxiliary connection
     ok = ofs_handler_message:disconnect(MessagePid, Reason),
     NewAuxConnections = lists:keydelete(Connection, 2, AuxConnections),
-    {reply, ok, State#?STATE{aux_connections = NewAuxConnections}};
+    State1 = State#?STATE{aux_connections = NewAuxConnections},
+    maybe_stop(State1),
+    {reply, ok, State1};
 handle_call({terminate, MessagePid, _Connection, Reason}, _From, State) ->
     % lost the main connection
     ok = ofs_handler_message:disconnect(MessagePid, Reason),
-    {reply, ok, State#?STATE{main_connection = undefined}};
+    State1 = State#?STATE{main_connection = undefined},
+    maybe_stop(State1),
+    {reply, ok, State1};
 handle_call(get_connections, _From, State) ->
     % return connections
     MainConnection = State#?STATE.main_connection,
@@ -238,7 +241,6 @@ terminate(Reason, #?STATE{datapath_id = DatapathId,
     ?WARNING("[~p] terminate datapathId(~p) reason(~p)",
                                             [?MODULE, DatapathId, Reason]),
     unregister_handler(DatapathId),
-    do_callback(Module, terminate, [CallbackState]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -261,6 +263,11 @@ register_handler(DatapathId) ->
 
 unregister_handler(DatapathId) ->
     true = ets:delete(?HANDLERS_TABLE, DatapathId).
+
+maybe_stop(#?STATE{main_connection = undefined, aux_connections = []}) ->
+    signal_stop(no_more_connections);
+maybe_stop(_) ->
+    ok.
 
 signal_stop(Reason) ->
     ?INFO("ofs_handler(~p) stopping: ~p", [self(), Reason]),

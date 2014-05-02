@@ -212,18 +212,24 @@ message_packet_in() ->
 
     ?assert(meck:validate(of_driver)),
     ?assert(meck:validate(ofs_handler_default_handler)),
+
     unload_mocks(),
     ok.
 
 aux_connection() ->
+    mock_of_driver(),
     mock_callback_handler(),
+
     {ok, OFDriverCBStateMain} = ofs_handler_init(),
     check_connections(true, 0),
     {ok, OFDriverCBStateAux} = ofs_handler_driver:handle_connect(?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?AUXCONNECTION, ?AUXID, ?OPT),
     check_connections(true, 1),
     ok = ofs_handler_driver:handle_disconnect(normal, OFDriverCBStateAux),
+    check_connections(true, 0),
     ok = ofs_handler_driver:terminate(normal, OFDriverCBStateMain),
-    check_connections(false, 0).
+
+    unload_mocks(),
+    ok.
 
 handle_error() ->
     mock_of_driver(),
@@ -275,7 +281,8 @@ mock_callback_handler() ->
     meck:new(ofs_handler_default_handler),
     meck:expect(ofs_handler_default_handler, init, fun(active, ?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?CONNECTION, ?CALLBACK_OPT) -> {ok, ?CALLBACK_STATE} end),
     meck:expect(ofs_handler_default_handler, connect, fun(active, ?IPADDR, ?DATAPATHID, ?FEATURES, ?VERSION, ?AUXCONNECTION, ?AUXID, ?CALLBACK_OPT) -> {ok, ?CALLBACK_STATE} end),
-    meck:expect(ofs_handler_default_handler, terminate, fun(_) -> ok end).
+    meck:expect(ofs_handler_default_handler, terminate, fun(_) -> ok end),
+    meck:expect(ofs_handler_default_handler, disconnect, fun(_) -> ok end).
 
 mock_test_receiver() ->
     meck:new(test_receiver, [passthrough]).
@@ -296,7 +303,7 @@ packet_in(Data) ->
         match = ?PKIN_MATCH,
         data = Data}).
 
-check_connections(Main, AuxCount) ->
+check_connections(true, AuxCount) ->
     {MainConnection, AuxConnections} = ofs_handler_logic:get_connections(?DATAPATHID),
-    ?assertEqual(Main, MainConnection /= undefined),
+    ?assert(MainConnection /= undefined),
     ?assertEqual(AuxCount, length(AuxConnections)).
