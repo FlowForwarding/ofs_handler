@@ -29,7 +29,7 @@
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
--define(STATE, ofs_handler_logic_state).
+-define(STATE, ofs_handler_message_state).
 -record(?STATE,
     {
         connection,
