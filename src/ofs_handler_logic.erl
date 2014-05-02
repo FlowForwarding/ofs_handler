@@ -235,9 +235,7 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(Reason, #?STATE{datapath_id = DatapathId,
-                          callback_state = CallbackState,
-                          callback_mod = Module}) ->
+terminate(Reason, #?STATE{datapath_id = DatapathId}) ->
     ?WARNING("[~p] terminate datapathId(~p) reason(~p)",
                                             [?MODULE, DatapathId, Reason]),
     unregister_handler(DatapathId),
