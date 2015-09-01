@@ -26,6 +26,8 @@
 
 % default callback handler for ofs_handler
 
+-behaviour(ofs_handler).
+
 -export([init/7,
          connect/8,
          disconnect/1,

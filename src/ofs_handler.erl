@@ -120,6 +120,20 @@
 -include_lib("of_protocol/include/of_protocol.hrl").
 -include("ofs_handler.hrl").
 
+-callback init('active', inet:ip4_address(), datapath_id(), features(),
+               of_version(), connection(), options()) ->
+    {'ok', State::term()} | {'error', Reason::term()}.
+
+-callback connect('active', inet:ip4_address(), datapath_id(), features(),
+                  of_version(), connection(), auxid(), options()) ->
+    {'ok', State::term()} | {'error', Reason::term()}.
+
+-callback disconnect(State::term()) -> 'ok'.
+
+-callback handle_error(Reason::term(), State::term()) -> 'ok'.
+
+-callback terminate(State::term()) -> 'ok'.
+
 %%% ===========================================================================
 %%% Public API
 %%% ===========================================================================
