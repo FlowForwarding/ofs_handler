@@ -23,5 +23,6 @@
   {applications, [kernel,
                   stdlib]},
   {env, [{callback_module, ofs_handler_default_handler}]},
-  {mod, {ofs_handler_app, []}}
+  {mod, {ofs_handler_app, []}},
+  {registered, []}
  ]}.
